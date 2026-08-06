@@ -9,9 +9,9 @@ export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico|login(?:/|$)|api/login(?:/|$)).*)"],
 };
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const session = verifySessionToken(token);
+  const session = await verifySessionToken(token);
 
   if (!session) {
     const loginUrl = new URL("/login", request.url);

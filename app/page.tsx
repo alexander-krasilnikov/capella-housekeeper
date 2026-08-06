@@ -1,6 +1,9 @@
+import Link from "next/link";
 import { readClusters } from "@/lib/store";
+import { readSettings } from "@/lib/settings";
 import { formatConfigSummary, formatStatusLabel } from "@/lib/configSummary";
 import { ageDaysBetween, formatAge } from "@/lib/format";
+import { computeAgeStatus } from "@/lib/ageStatus";
 import ClusterTable, { type ClusterRow } from "./components/ClusterTable";
 import RefreshButton from "./components/RefreshButton";
 import { logoutAction } from "./actions";
@@ -22,7 +25,7 @@ function formatStorage(storage: { type?: string; sizeGb?: number; iops?: number 
 }
 
 export default async function DashboardPage() {
-  const clusters = await readClusters();
+  const [clusters, settings] = await Promise.all([readClusters(), readSettings()]);
   const now = Date.now();
 
   // Dates/times are intentionally passed as raw timestamps, not
@@ -52,6 +55,13 @@ export default async function DashboardPage() {
       actualCostAsOfMs: c.actualCost.asOf ? new Date(c.actualCost.asOf).getTime() : null,
       actualCostUnavailableReason: c.actualCost.unavailableReason ?? null,
       statusLabel: formatStatusLabel(c.config.status),
+      ageStatus: computeAgeStatus(
+        ageDaysBetween(createdAtMs, now),
+        lastActivityMs,
+        c.lastActivitySource,
+        now,
+        settings,
+      ),
       deleted: c.deletedAt !== null,
       lastSyncedAtMs: new Date(c.lastSyncedAt).getTime(),
     };
@@ -67,6 +77,12 @@ export default async function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Link
+            href="/settings"
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Settings
+          </Link>
           <RefreshButton />
           <form action={logoutAction}>
             <button

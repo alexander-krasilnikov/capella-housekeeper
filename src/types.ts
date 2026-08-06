@@ -69,3 +69,38 @@ export interface StoreData {
   clusters: ClusterRecord[];
   history: ClusterSnapshot[];
 }
+
+export type AgeStatus = "New" | "Established" | "Stale" | "Forgotten";
+
+export interface Settings {
+  newDays: number;
+  staleDays: number;
+  forgottenDays: number;
+  inactivityGraceDays: number;
+  capellaOrgs: OrgConfig[];
+  capellaApiBaseUrl: string;
+  syncIntervalHours: number;
+  retentionDays: number;
+  dashboardUsername: string;
+  dashboardPassword: string;
+  /** HMAC key for session cookies. Never rendered by the settings UI - see dashboard-settings spec. */
+  sessionSecret: string;
+}
+
+/**
+ * Excludes `sessionSecret` deliberately - it must never be a shared static
+ * value baked into source (every install needs its own), so it's generated
+ * fresh at first-seed time in settings.ts instead of living here.
+ */
+export const DEFAULT_SETTINGS: Omit<Settings, "sessionSecret"> = {
+  newDays: 1,
+  staleDays: 2,
+  forgottenDays: 3,
+  inactivityGraceDays: 1,
+  capellaOrgs: [],
+  capellaApiBaseUrl: "https://cloudapi.cloud.couchbase.com/v4",
+  syncIntervalHours: 1,
+  retentionDays: 7,
+  dashboardUsername: "admin",
+  dashboardPassword: "change-me",
+};

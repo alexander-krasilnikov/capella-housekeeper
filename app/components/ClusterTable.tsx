@@ -5,19 +5,19 @@ import {
   createColumnHelper,
   flexRender,
   getCoreRowModel,
-  getExpandedRowModel,
+  getFacetedRowModel,
+  getFacetedUniqueValues,
   getFilteredRowModel,
-  getGroupedRowModel,
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
-  type ExpandedState,
+  type ColumnFiltersState,
   type FilterFn,
-  type GroupingState,
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
 import { formatUsd } from "@/lib/format";
+import type { AgeStatus } from "@/types";
 
 declare module "@tanstack/react-table" {
   interface ColumnMeta<TData, TValue> {
@@ -44,9 +44,12 @@ export interface ClusterRow {
   actualCostAsOfMs: number | null;
   actualCostUnavailableReason: "credits-based" | "no-access" | "error" | null;
   statusLabel: string;
+  ageStatus: AgeStatus;
   deleted: boolean;
   lastSyncedAtMs: number;
 }
+
+const AGE_STATUS_OPTIONS: AgeStatus[] = ["New", "Established", "Stale", "Forgotten"];
 
 const ACTUAL_COST_UNAVAILABLE_LABEL: Record<"credits-based" | "no-access" | "error", string> = {
   "credits-based": "Billed in credits",
@@ -105,9 +108,9 @@ function FormattedDateTime({ ms }: { ms: number | null }) {
 
 /**
  * Search matches against the same display labels the user sees (not the
- * raw sort/aggregation values, which are numbers for the cost columns) -
- * checked once per row against every column's label, independent of which
- * column TanStack happens to invoke this for.
+ * raw sort values, which are numbers for the cost columns) - checked once
+ * per row against every column's label, independent of which column
+ * TanStack happens to invoke this for.
  */
 const globalFuzzyFilter: FilterFn<ClusterRow> = (row, _columnId, filterValue) => {
   const term = String(filterValue).toLowerCase();
@@ -137,16 +140,14 @@ const columns = [
     id: "expander",
     header: () => null,
     meta: { widthPct: 3 },
-    enableGrouping: false,
     enableSorting: false,
     enableHiding: false,
   }),
-  columnHelper.accessor("org", { header: "Org", meta: { widthPct: 8 }, enableGrouping: true }),
-  columnHelper.accessor("project", { header: "Project", meta: { widthPct: 7 }, enableGrouping: true }),
+  columnHelper.accessor("org", { header: "Org", meta: { widthPct: 8 } }),
+  columnHelper.accessor("project", { header: "Project", meta: { widthPct: 7 } }),
   columnHelper.accessor("name", {
     header: "Cluster",
     meta: { widthPct: 9 },
-    enableGrouping: false,
     cell: (info) => (
       <span className="font-medium text-slate-900 dark:text-slate-100">{info.getValue()}</span>
     ),
@@ -155,42 +156,35 @@ const columns = [
     id: "createdAt",
     header: "Created",
     meta: { widthPct: 8 },
-    enableGrouping: false,
     cell: (info) => <FormattedDateTime ms={info.getValue()} />,
   }),
   columnHelper.accessor("ageLabel", {
     id: "age",
     header: "Age",
     meta: { widthPct: 5 },
-    enableGrouping: false,
     sortingFn: (a, b) => a.original.ageDays - b.original.ageDays,
   }),
   columnHelper.accessor("lastActivityMs", {
     id: "lastActivity",
     header: "Last Activity",
     meta: { widthPct: 9 },
-    enableGrouping: false,
     sortingFn: (a, b) => (a.original.lastActivityMs ?? -Infinity) - (b.original.lastActivityMs ?? -Infinity),
     cell: (info) => <FormattedDateTime ms={info.getValue()} />,
   }),
   columnHelper.accessor("owner", {
     header: "Owner",
     meta: { widthPct: 13 },
-    enableGrouping: true,
     cell: (info) => <span className="break-words">{info.getValue()}</span>,
   }),
   columnHelper.accessor("configSummary", {
     id: "config",
     header: "Configuration",
     meta: { widthPct: 16 },
-    enableGrouping: false,
   }),
   columnHelper.accessor("actualCost", {
     id: "actualCost",
     header: "Actual Cost",
     meta: { widthPct: 8 },
-    enableGrouping: false,
-    aggregationFn: "sum",
     cell: (info) => {
       const amount = info.getValue();
       if (amount === null) {
@@ -202,16 +196,21 @@ const columns = [
         </span>
       );
     },
-    aggregatedCell: (info) => formatUsd(info.getValue() as number),
   }),
   columnHelper.accessor((row) => (row.deleted ? "Deleted" : row.statusLabel), {
     id: "status",
     header: "Status",
     meta: { widthPct: 6 },
-    enableGrouping: false,
     cell: (info) => (
       <StatusBadge deleted={info.row.original.deleted} statusLabel={info.row.original.statusLabel} />
     ),
+  }),
+  columnHelper.accessor("ageStatus", {
+    id: "ageStatus",
+    header: "Age Status",
+    meta: { widthPct: 7 },
+    filterFn: "equalsString",
+    cell: (info) => <AgeStatusBadge status={info.getValue()} />,
   }),
 ];
 
@@ -237,11 +236,10 @@ function loadPersistedConfig(): PersistedTableConfig {
 
 export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
   const [globalFilter, setGlobalFilter] = useState("");
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [sorting, setSorting] = useState<SortingState>([{ id: "org", desc: false }]);
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-  const [grouping, setGrouping] = useState<GroupingState>([]);
-  const [expanded, setExpanded] = useState<ExpandedState>({});
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [detailOpenIds, setDetailOpenIds] = useState<Set<string>>(new Set());
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
@@ -279,7 +277,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
   // on the very first render, which is what autoResetPageIndex does.
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [globalFilter]);
+  }, [globalFilter, columnFilters]);
 
   const table = useReactTable({
     data: rows,
@@ -287,21 +285,18 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
     state: {
       sorting,
       globalFilter,
+      columnFilters,
       columnOrder,
       columnVisibility,
-      grouping,
-      expanded,
       pagination,
     },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
+    onColumnFiltersChange: setColumnFilters,
     onColumnOrderChange: setColumnOrder,
     onColumnVisibilityChange: setColumnVisibility,
-    onGroupingChange: setGrouping,
-    onExpandedChange: setExpanded,
     onPaginationChange: setPagination,
     globalFilterFn: globalFuzzyFilter,
-    paginateExpandedRows: false,
     // Default true: TanStack resets the page index as a side effect of
     // computing the row model whenever the filtered set changes, which
     // happens synchronously during the very first render (before this
@@ -312,8 +307,8 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
     defaultColumn: { sortDescFirst: false },
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
-    getGroupedRowModel: getGroupedRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
+    getFacetedRowModel: getFacetedRowModel(),
+    getFacetedUniqueValues: getFacetedUniqueValues(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
   });
@@ -361,6 +356,13 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
     .filter((c) => c.id !== "expander" && !c.getIsVisible())
     .map((c) => c.id);
 
+  // Counts per tier among rows passing every filter *except* this column's
+  // own - i.e. "how many would show up if this button were selected" -
+  // rather than a raw, filter-blind total.
+  const ageStatusFacets = table.getColumn("ageStatus")?.getFacetedUniqueValues() ?? new Map<string, number>();
+  const currentAgeStatusFilter = table.getColumn("ageStatus")?.getFilterValue() as string | undefined;
+  const totalAgeStatusCount = Array.from(ageStatusFacets.values()).reduce((sum, n) => sum + n, 0);
+
   const pageRows = table.getRowModel().rows;
   const totalRowCount = table.getPrePaginationRowModel().rows.length;
   const pageCount = table.getPageCount();
@@ -385,17 +387,31 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
           className="w-full max-w-sm rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
         />
 
-        <select
-          value={grouping[0] ?? ""}
-          onChange={(e) => setGrouping(e.target.value ? [e.target.value] : [])}
-          aria-label="Group rows by"
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+        <div
+          role="group"
+          aria-label="Filter by age status"
+          className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white p-1 dark:border-slate-700 dark:bg-slate-900"
         >
-          <option value="">No grouping</option>
-          <option value="org">Group by Org</option>
-          <option value="project">Group by Project</option>
-          <option value="owner">Group by Owner</option>
-        </select>
+          {(["All", ...AGE_STATUS_OPTIONS] as const).map((tier) => {
+            const isActive = tier === "All" ? currentAgeStatusFilter === undefined : currentAgeStatusFilter === tier;
+            const count = tier === "All" ? totalAgeStatusCount : ageStatusFacets.get(tier) ?? 0;
+            return (
+              <button
+                key={tier}
+                type="button"
+                aria-pressed={isActive}
+                onClick={() => table.getColumn("ageStatus")?.setFilterValue(tier === "All" ? undefined : tier)}
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold uppercase tracking-wide transition ${
+                  isActive
+                    ? "bg-blue-600 text-white"
+                    : "text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                }`}
+              >
+                {tier} <span className={isActive ? "text-blue-100" : "text-slate-400 dark:text-slate-500"}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
 
         <div className="relative">
           <button
@@ -451,7 +467,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
 
       {pageRows.length === 0 ? (
         <p className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-          No clusters match &ldquo;{globalFilter}&rdquo;.
+          {globalFilter ? <>No clusters match &ldquo;{globalFilter}&rdquo;.</> : "No clusters match the current filters."}
         </p>
       ) : (
         <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
@@ -496,45 +512,14 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                       if (cell.column.id === "expander") {
                         return (
                           <td key={cell.id} className="px-1 py-1.5 text-center lg:px-2 lg:py-2">
-                            {!row.getIsGrouped() && (
-                              <button
-                                type="button"
-                                onClick={() => toggleDetail(row.original.clusterId)}
-                                aria-label="Toggle cluster details"
-                                className="text-slate-400 transition hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400"
-                              >
-                                {detailOpenIds.has(row.original.clusterId) ? "▾" : "▸"}
-                              </button>
-                            )}
-                          </td>
-                        );
-                      }
-
-                      if (cell.getIsGrouped()) {
-                        return (
-                          <td key={cell.id} className="break-words px-1.5 py-1.5 lg:px-3 lg:py-2">
                             <button
                               type="button"
-                              onClick={row.getToggleExpandedHandler()}
-                              className="inline-flex items-center gap-1.5 font-medium text-slate-900 dark:text-slate-100"
+                              onClick={() => toggleDetail(row.original.clusterId)}
+                              aria-label="Toggle cluster details"
+                              className="text-slate-400 transition hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400"
                             >
-                              <span>{row.getIsExpanded() ? "▾" : "▸"}</span>
-                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                              <span className="text-xs font-normal text-slate-400 dark:text-slate-500">
-                                ({row.subRows.length})
-                              </span>
+                              {detailOpenIds.has(row.original.clusterId) ? "▾" : "▸"}
                             </button>
-                          </td>
-                        );
-                      }
-
-                      if (cell.getIsAggregated()) {
-                        return (
-                          <td key={cell.id} className="break-words px-1.5 py-1.5 text-slate-600 lg:px-3 lg:py-2 dark:text-slate-300">
-                            {flexRender(
-                              cell.column.columnDef.aggregatedCell ?? cell.column.columnDef.cell,
-                              cell.getContext(),
-                            )}
                           </td>
                         );
                       }
@@ -554,7 +539,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                       );
                     })}
                   </tr>
-                  {!row.getIsGrouped() && detailOpenIds.has(row.original.clusterId) && (
+                  {detailOpenIds.has(row.original.clusterId) && (
                     <tr className="bg-slate-50 dark:bg-slate-900/60">
                       <td colSpan={row.getVisibleCells().length} className="px-4 py-3">
                         <dl className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs sm:grid-cols-4">
@@ -679,6 +664,23 @@ function StatusBadge({ deleted, statusLabel }: { deleted: boolean; statusLabel: 
     <span className={`inline-flex items-center gap-1.5 ${colorClass}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
       {statusLabel}
+    </span>
+  );
+}
+
+const AGE_STATUS_STYLE: Record<AgeStatus, { text: string; dot: string }> = {
+  New: { text: "text-slate-500 dark:text-slate-400", dot: "bg-slate-400" },
+  Established: { text: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
+  Stale: { text: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
+  Forgotten: { text: "text-rose-600 dark:text-rose-400", dot: "bg-rose-500" },
+};
+
+function AgeStatusBadge({ status }: { status: AgeStatus }) {
+  const style = AGE_STATUS_STYLE[status];
+  return (
+    <span className={`inline-flex items-center gap-1.5 ${style.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+      {status}
     </span>
   );
 }

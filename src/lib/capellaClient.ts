@@ -1,4 +1,3 @@
-import { config } from "../config";
 import { acquireSlot } from "./rateLimiter";
 import type { OrgConfig } from "../types";
 
@@ -17,6 +16,7 @@ export class CapellaApiError extends Error {
 
 async function request<T>(
   org: OrgConfig,
+  apiBaseUrl: string,
   pathSuffix: string,
   init?: { method?: "GET" | "POST"; body?: unknown },
 ): Promise<T> {
@@ -26,7 +26,7 @@ async function request<T>(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), isWrite ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS);
   try {
-    const res = await fetch(`${config.capellaApiBaseUrl}${pathSuffix}`, {
+    const res = await fetch(`${apiBaseUrl}${pathSuffix}`, {
       method: init?.method ?? "GET",
       headers: {
         Authorization: `Bearer ${org.apiKey}`,
@@ -48,7 +48,7 @@ async function request<T>(
       const bodyPreview = (await res.text()).slice(0, 200);
       throw new CapellaApiError(
         `Capella API ${pathSuffix} returned non-JSON response (content-type: ${contentType || "none"}). ` +
-          `This usually means CAPELLA_API_BASE_URL is wrong. Body preview: ${bodyPreview}`,
+          `This usually means the configured Capella API base URL is wrong. Body preview: ${bodyPreview}`,
         res.status,
       );
     }
@@ -65,8 +65,8 @@ export interface CapellaOrganization {
 }
 
 /** Fetches the organization's real display name, confirmed to carry a `name` field. */
-export async function getOrganization(org: OrgConfig): Promise<CapellaOrganization> {
-  return request<CapellaOrganization>(org, `/organizations/${org.orgId}`);
+export async function getOrganization(org: OrgConfig, apiBaseUrl: string): Promise<CapellaOrganization> {
+  return request<CapellaOrganization>(org, apiBaseUrl, `/organizations/${org.orgId}`);
 }
 
 export interface CapellaUser {
@@ -81,8 +81,8 @@ export interface CapellaUser {
  * if this fails, since the exact response shape wasn't confirmed against
  * real credentials at design time.
  */
-export async function getUser(org: OrgConfig, userId: string): Promise<CapellaUser> {
-  return request<CapellaUser>(org, `/organizations/${org.orgId}/users/${userId}`);
+export async function getUser(org: OrgConfig, apiBaseUrl: string, userId: string): Promise<CapellaUser> {
+  return request<CapellaUser>(org, apiBaseUrl, `/organizations/${org.orgId}/users/${userId}`);
 }
 
 export interface CapellaProject {
@@ -111,9 +111,10 @@ export interface CapellaClusterConfig {
   currentState: string;
 }
 
-export async function listProjects(org: OrgConfig): Promise<CapellaProject[]> {
+export async function listProjects(org: OrgConfig, apiBaseUrl: string): Promise<CapellaProject[]> {
   const res = await request<{ data: CapellaProject[] }>(
     org,
+    apiBaseUrl,
     `/organizations/${org.orgId}/projects`,
   );
   return res.data ?? [];
@@ -121,10 +122,12 @@ export async function listProjects(org: OrgConfig): Promise<CapellaProject[]> {
 
 export async function listClusters(
   org: OrgConfig,
+  apiBaseUrl: string,
   projectId: string,
 ): Promise<CapellaClusterConfig[]> {
   const res = await request<{ data: CapellaClusterConfig[] }>(
     org,
+    apiBaseUrl,
     `/organizations/${org.orgId}/projects/${projectId}/clusters`,
   );
   return res.data ?? [];
@@ -149,6 +152,7 @@ export interface ActivityLogEvent {
  */
 export async function getActivityLog(
   org: OrgConfig,
+  apiBaseUrl: string,
   clusterId: string,
 ): Promise<ActivityLogEvent[]> {
   const params = new URLSearchParams({
@@ -160,6 +164,7 @@ export async function getActivityLog(
   });
   const res = await request<{ data: ActivityLogEvent[] }>(
     org,
+    apiBaseUrl,
     `/organizations/${org.orgId}/events?${params.toString()}`,
   );
   return res.data ?? [];
@@ -196,6 +201,7 @@ export type BillingResult =
  */
 export async function getBillingUsage(
   org: OrgConfig,
+  apiBaseUrl: string,
   projectId: string,
   clusterId: string,
 ): Promise<BillingResult> {
@@ -208,6 +214,7 @@ export async function getBillingUsage(
       data: { total: { totalCurrencySpend: number | null } };
     }>(
       org,
+      apiBaseUrl,
       `/organizations/${org.orgId}/projects/${projectId}/clusters/${clusterId}/billing`,
       { method: "POST", body: { startDate, endDate } },
     );

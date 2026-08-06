@@ -17,7 +17,7 @@ import {
   appendHistory,
   purgeExpiredTombstones,
 } from "./store";
-import { loadOrgConfigs } from "../config";
+import { readSettings } from "./settings";
 import type {
   ClusterRecord,
   ClusterSnapshot,
@@ -64,11 +64,12 @@ interface ResolvedActivity {
 /** Tries the Activity Log; treats any failure as "not reachable" (e.g. insufficient key role). */
 async function resolveActivityFromLog(
   org: Parameters<typeof getActivityLog>[0],
+  apiBaseUrl: string,
   clusterId: string,
 ): Promise<ResolvedActivity | null> {
   let events: ActivityLogEvent[];
   try {
-    events = await getActivityLog(org, clusterId);
+    events = await getActivityLog(org, apiBaseUrl, clusterId);
   } catch (err) {
     if (err instanceof CapellaApiError) return null;
     throw err;
@@ -105,6 +106,7 @@ function resolveActivityFromSyncObservation(
  */
 async function resolveOwner(
   org: Parameters<typeof getUser>[0],
+  apiBaseUrl: string,
   createdBy: string | undefined,
   existingOwnerDerived: string | null,
   userDisplayNameCache: Map<string, string>,
@@ -115,7 +117,7 @@ async function resolveOwner(
   if (cached) return cached;
 
   try {
-    const user = await getUser(org, createdBy);
+    const user = await getUser(org, apiBaseUrl, createdBy);
     const display = user.email ?? user.name ?? createdBy;
     userDisplayNameCache.set(createdBy, display);
     return display;
@@ -153,7 +155,9 @@ export function runSyncCycle(): Promise<SyncResult> {
 }
 
 async function runSyncCycleUnguarded(): Promise<SyncResult> {
-  const orgs = loadOrgConfigs();
+  const settings = await readSettings();
+  const orgs = settings.capellaOrgs;
+  const apiBaseUrl = settings.capellaApiBaseUrl;
   const existingClusters = await readClusters();
   const existingById = new Map(existingClusters.map((c) => [c.clusterId, c]));
 
@@ -168,7 +172,7 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
   for (const org of orgs) {
     let orgName = org.orgName ?? org.orgId;
     try {
-      const orgInfo = await getOrganization(org);
+      const orgInfo = await getOrganization(org, apiBaseUrl);
       if (orgInfo.name) orgName = orgInfo.name;
     } catch (err) {
       if (!(err instanceof CapellaApiError)) throw err;
@@ -182,7 +186,7 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
 
     let projects: CapellaProject[];
     try {
-      projects = await listProjects(org);
+      projects = await listProjects(org, apiBaseUrl);
     } catch (err) {
       if (!(err instanceof CapellaApiError)) throw err;
       console.error(`[sync] org ${org.orgId}: failed to list projects, skipping this cycle:`, err.message);
@@ -193,7 +197,7 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
     for (const project of projects) {
       let clusters: CapellaClusterConfig[];
       try {
-        clusters = await listClusters(org, project.id);
+        clusters = await listClusters(org, apiBaseUrl, project.id);
       } catch (err) {
         if (!(err instanceof CapellaApiError)) throw err;
         console.error(
@@ -213,18 +217,19 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
 
         const ownerDerived = await resolveOwner(
           org,
+          apiBaseUrl,
           raw.audit?.createdBy,
           existing?.ownerDerived ?? null,
           userDisplayNameCache,
         );
 
         const resolvedActivity =
-          (await resolveActivityFromLog(org, raw.id)) ??
+          (await resolveActivityFromLog(org, apiBaseUrl, raw.id)) ??
           (raw.audit?.modifiedAt
             ? { lastActivityAt: raw.audit.modifiedAt, lastActivitySource: "sync-observed" as const }
             : resolveActivityFromSyncObservation(createdAt, fp, existing, now));
 
-        const billing = await getBillingUsage(org, project.id, raw.id);
+        const billing = await getBillingUsage(org, apiBaseUrl, project.id, raw.id);
 
         const record: ClusterRecord = {
           clusterId: raw.id,
@@ -273,7 +278,7 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
 
   await upsertClusters(records);
   await appendHistory(snapshots);
-  const { purgedClusterIds } = await purgeExpiredTombstones(new Date(now));
+  const { purgedClusterIds } = await purgeExpiredTombstones(new Date(now), settings.retentionDays);
 
   return {
     syncedClusters: records.length,

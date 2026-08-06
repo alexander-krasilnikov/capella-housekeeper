@@ -37,34 +37,35 @@ vanish from history the moment they're torn down.
 
 ## Setup
 
-1. Copy the env template and fill it in:
+No environment variables required. Install dependencies and run:
 
-   ```bash
-   cp .env.example .env
-   ```
+```bash
+npm install
+npm run dev     # http://localhost:3000, background sync starts automatically
+```
 
-   - `CAPELLA_ORGS` — JSON array, one entry per Capella organization to
-     monitor: `orgId` and a Bearer `apiKey` with read access. `orgName`
-     is optional — sync fetches the real org name from the API each
-     cycle and only falls back to this field (or the ID) if that fails.
-   - `SESSION_SECRET` — random signing secret for session cookies:
-     `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
-   - `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` — the dashboard login.
-   - `SYNC_INTERVAL_MS`, `RETENTION_DAYS`, `DATA_DIR` — optional, sensible
-     defaults are set in `src/config.ts`.
+For production: `npm run build && npm run start`.
 
-2. Install dependencies and run:
+On first run the dashboard seeds default settings (`admin` / `change-me`,
+1-hour sync, 7-day retention, zero organizations configured) into
+`data/settings.json` and shows an empty dashboard. Log in, then go to
+**Settings** to:
 
-   ```bash
-   npm install
-   npm run dev     # http://localhost:3000, background sync starts automatically
-   ```
+- Change the default username/password (requires the current password).
+- Add at least one Capella organization (`orgId` + a Bearer `apiKey` with
+  read access) so sync has something to poll.
+- Adjust the sync interval, retention period, age-status thresholds, or the
+  Capella API base URL, if needed.
 
-   For production: `npm run build && npm run start`.
+Every setting takes effect on its next use (next sync cycle, next
+age-status computation) without a restart. The one exception is the
+session-signing secret: it's generated automatically on first run and is
+never shown - Settings only offers a "Rotate" action, which logs out every
+active session.
 
-The first sync cycle runs immediately on startup, then on the
-`SYNC_INTERVAL_MS` interval. Until it completes, the dashboard shows an
-empty state.
+The first sync cycle runs immediately on startup, then on the configured
+sync interval. Until at least one organization is configured and a cycle
+completes, the dashboard shows an empty state.
 
 ## Known open risk
 
@@ -79,13 +80,13 @@ path is worth validating against a real org API key.
 ## Project layout
 
 ```
-app/                    Next.js routes: login, dashboard, server actions
-src/config.ts           Env var loading
-src/types.ts            Shared types (ClusterRecord, etc.)
+app/                    Next.js routes: login, dashboard, settings, server actions
+src/types.ts            Shared types (ClusterRecord, Settings, etc.)
+src/lib/settings.ts      All runtime configuration: read/write/validate data/settings.json
 src/lib/capellaClient.ts  Capella Management API client
 src/lib/rateLimiter.ts    Per-API-key rate limiting (100 req/min)
 src/lib/sync.ts           One sync cycle: fetch, derive, tombstone
-src/lib/scheduler.ts      Interval loop, started from instrumentation.ts
+src/lib/scheduler.ts      Self-rescheduling sync loop, started from instrumentation.ts
 src/lib/store.ts          Local JSON store: atomic writes, history, retention
 src/lib/auth.ts           Session cookie signing/verification
 ```

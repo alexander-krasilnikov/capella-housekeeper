@@ -1,21 +1,23 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { config } from "../config";
 import type { ClusterRecord, ClusterSnapshot } from "../types";
 
 const CLUSTERS_FILE = "clusters.json";
 const HISTORY_FILE = "history.json";
 
+/** Not a setting - see design.md in the eliminate-env-config change. */
+const DATA_DIR = "./data";
+
 function clustersPath(): string {
-  return path.join(config.dataDir, CLUSTERS_FILE);
+  return path.join(DATA_DIR, CLUSTERS_FILE);
 }
 
 function historyPath(): string {
-  return path.join(config.dataDir, HISTORY_FILE);
+  return path.join(DATA_DIR, HISTORY_FILE);
 }
 
 async function ensureDataDir(): Promise<void> {
-  await fs.mkdir(config.dataDir, { recursive: true });
+  await fs.mkdir(DATA_DIR, { recursive: true });
 }
 
 async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
@@ -83,7 +85,7 @@ export async function upsertClusters(incoming: ClusterRecord[]): Promise<void> {
  * without this second part, an active cluster's history grows by one entry
  * per sync cycle forever, since nothing else ever prunes it.
  */
-export async function purgeExpiredTombstones(now: Date = new Date()): Promise<{
+export async function purgeExpiredTombstones(now: Date, retentionDays: number): Promise<{
   purgedClusterIds: string[];
 }> {
   return serialize(async () => {
@@ -92,7 +94,7 @@ export async function purgeExpiredTombstones(now: Date = new Date()): Promise<{
       readJsonFile<ClusterSnapshot[]>(historyPath(), []),
     ]);
 
-    const cutoffMs = config.retentionDays * 24 * 60 * 60 * 1000;
+    const cutoffMs = retentionDays * 24 * 60 * 60 * 1000;
     const purgedClusterIds: string[] = [];
 
     const keptClusters = clusters.filter((c) => {

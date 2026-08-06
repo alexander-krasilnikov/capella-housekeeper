@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { config } from "../config";
+import { readSettings } from "./settings";
 
 export const SESSION_COOKIE_NAME = "chk_session";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -10,34 +10,28 @@ interface SessionPayload {
   exp: number;
 }
 
-function sign(data: string): string {
-  return crypto.createHmac("sha256", config.sessionSecret).update(data).digest("base64url");
+function sign(data: string, secret: string): string {
+  return crypto.createHmac("sha256", secret).update(data).digest("base64url");
 }
 
-export function createSessionToken(username: string): string {
+export async function createSessionToken(username: string): Promise<string> {
+  const { sessionSecret } = await readSettings();
   const payload: SessionPayload = {
     username,
     iat: Date.now(),
     exp: Date.now() + SESSION_TTL_MS,
   };
   const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${data}.${sign(data)}`;
+  return `${data}.${sign(data, sessionSecret)}`;
 }
 
-export function verifySessionToken(token: string | undefined | null): SessionPayload | null {
+export async function verifySessionToken(token: string | undefined | null): Promise<SessionPayload | null> {
   if (!token) return null;
   const [data, signature] = token.split(".");
   if (!data || !signature) return null;
 
-  // Config.sessionSecret throws if SESSION_SECRET is unset - treat that as
-  // "can't verify this session" (redirect to login) rather than a hard
-  // crash on every request through the auth middleware.
-  let expectedSignature: string;
-  try {
-    expectedSignature = sign(data);
-  } catch {
-    return null;
-  }
+  const { sessionSecret } = await readSettings();
+  const expectedSignature = sign(data, sessionSecret);
   const sigBuf = Buffer.from(signature);
   const expectedBuf = Buffer.from(expectedSignature);
   if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
@@ -63,10 +57,18 @@ function timingSafeStringEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aBuf, bBuf);
 }
 
-export function verifyCredentials(username: string, password: string): boolean {
-  if (!config.dashboard.password) return false;
+export async function verifyCredentials(username: string, password: string): Promise<boolean> {
+  const { dashboardUsername, dashboardPassword } = await readSettings();
+  if (!dashboardPassword) return false;
   return (
-    timingSafeStringEqual(username, config.dashboard.username) &&
-    timingSafeStringEqual(password, config.dashboard.password)
+    timingSafeStringEqual(username, dashboardUsername) &&
+    timingSafeStringEqual(password, dashboardPassword)
   );
+}
+
+/** For confirming a credential change - checks only the password, not a full login (username isn't being re-asserted). */
+export async function verifyCurrentPassword(password: string): Promise<boolean> {
+  const { dashboardPassword } = await readSettings();
+  if (!dashboardPassword) return false;
+  return timingSafeStringEqual(password, dashboardPassword);
 }
