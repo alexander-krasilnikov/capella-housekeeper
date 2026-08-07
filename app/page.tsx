@@ -2,6 +2,7 @@ import Link from "next/link";
 import { readClusters } from "@/lib/store";
 import { readSettings } from "@/lib/settings";
 import { formatConfigSummary, formatStatusLabel } from "@/lib/configSummary";
+import { isAlreadyOff } from "@/lib/slack";
 import { ageDaysBetween, formatAge } from "@/lib/format";
 import { computeAgeStatus } from "@/lib/ageStatus";
 import ClusterTable, { type ClusterRow } from "./components/ClusterTable";
@@ -57,6 +58,7 @@ export default async function DashboardPage() {
       actualCostAsOfMs: c.actualCost.asOf ? new Date(c.actualCost.asOf).getTime() : null,
       actualCostUnavailableReason: c.actualCost.unavailableReason ?? null,
       statusLabel: formatStatusLabel(c.config.status),
+      statusIsOff: isAlreadyOff(c.config.status),
       consentStatus: c.consentStatus,
       actionOutcome: c.actionOutcome,
       snoozeUntilMs: c.snoozeUntil ? new Date(c.snoozeUntil).getTime() : null,

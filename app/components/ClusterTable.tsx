@@ -18,6 +18,8 @@ import {
 } from "@tanstack/react-table";
 import { formatUsd } from "@/lib/format";
 import SendConsentRequestButton from "./SendConsentRequestButton";
+import ManualTurnOffButton from "./ManualTurnOffButton";
+import ManualDeleteButton from "./ManualDeleteButton";
 import type { AgeStatus, ConsentActionOutcome, ConsentStatus } from "@/types";
 
 declare module "@tanstack/react-table" {
@@ -45,6 +47,7 @@ export interface ClusterRow {
   actualCostAsOfMs: number | null;
   actualCostUnavailableReason: "credits-based" | "no-access" | "error" | null;
   statusLabel: string;
+  statusIsOff: boolean;
   ageStatus: AgeStatus;
   consentStatus: ConsentStatus;
   actionOutcome: ConsentActionOutcome;
@@ -702,6 +705,23 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                                           {formatDateTime(row.original.lastSyncedAtMs)}
                                         </dd>
                                       </div>
+                                      {!row.original.deleted && (
+                                        <div>
+                                          <dt className="text-slate-400 dark:text-slate-500">Actions</dt>
+                                          <dd className="flex flex-wrap items-center gap-2">
+                                            {!row.original.statusIsOff && (
+                                              <ManualTurnOffButton
+                                                clusterId={row.original.clusterId}
+                                                clusterName={row.original.name}
+                                              />
+                                            )}
+                                            <ManualDeleteButton
+                                              clusterId={row.original.clusterId}
+                                              clusterName={row.original.name}
+                                            />
+                                          </dd>
+                                        </div>
+                                      )}
                                     </>
                                   )}
                                   {group === "Workflow" && hasSnooze && (

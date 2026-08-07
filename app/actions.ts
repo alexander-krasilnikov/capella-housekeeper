@@ -13,6 +13,7 @@ import {
 import { runSyncCycle } from "@/lib/sync";
 import { readSettings, writeSettings } from "@/lib/settings";
 import { sendManualConsentRequest, type ManualConsentResult } from "@/lib/notifications";
+import { manualTurnOff, manualDelete, type ManualActionResult } from "@/lib/manualActions";
 import { testSlackConnection, type SlackConnectionTestResult } from "@/lib/slack";
 import { getSlackBotStatus, reconnectSlackBot, type SlackBotStatus } from "@/lib/slackBot";
 import type { NotifiableAgeStatus, NotificationsByTier, OrgConfig } from "@/types";
@@ -191,6 +192,20 @@ export async function saveNotificationsAction(formData: FormData): Promise<void>
 /** Thin wrapper so the client component can call a proper Server Action - the real logic lives in src/lib/notifications.ts, shared with the automatic tier-transition path. */
 export async function sendConsentRequestAction(clusterId: string): Promise<ManualConsentResult> {
   const result = await sendManualConsentRequest(clusterId);
+  if (result.ok) revalidatePath("/");
+  return result;
+}
+
+/** Thin wrapper so the client component can call a proper Server Action - the real logic lives in src/lib/manualActions.ts, deliberately independent of the owner-consent workflow (see manual-cluster-actions spec). */
+export async function manualTurnOffAction(clusterId: string): Promise<ManualActionResult> {
+  const result = await manualTurnOff(clusterId);
+  if (result.ok) revalidatePath("/");
+  return result;
+}
+
+/** Thin wrapper, same shape as manualTurnOffAction above. */
+export async function manualDeleteAction(clusterId: string): Promise<ManualActionResult> {
+  const result = await manualDelete(clusterId);
   if (result.ok) revalidatePath("/");
   return result;
 }

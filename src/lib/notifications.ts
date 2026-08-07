@@ -25,7 +25,7 @@ export function computeRecordAgeStatus(record: ClusterRecord, settings: Settings
   );
 }
 
-async function supersedeLiveMessage(record: ClusterRecord, settings: Settings, text: string): Promise<void> {
+export async function supersedeLiveMessage(record: ClusterRecord, settings: Settings, text: string): Promise<void> {
   if (!record.slackChannelId || !record.slackMessageTs) return;
   if (!settings.slackBotToken) return;
   await updateMessage(settings.slackBotToken, record.slackChannelId, record.slackMessageTs, text).catch(
