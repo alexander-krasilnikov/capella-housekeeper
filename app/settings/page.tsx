@@ -2,6 +2,7 @@ import Link from "next/link";
 import { readSettings } from "@/lib/settings";
 import { saveSettingsAction, saveCredentialsAction, rotateSessionSecretAction } from "../actions";
 import OrgsEditor from "./OrgsEditor";
+import NotificationsEditor from "./NotificationsEditor";
 import SettingsShell, { type SettingsSection } from "./SettingsShell";
 
 function NumberField({
@@ -68,7 +69,7 @@ function resolveInitialSection(params: {
   credSaved?: string;
   secretError?: string;
 }): string {
-  const SHARED_SECTION_IDS = ["thresholds", "sync", "apiUrl"];
+  const SHARED_SECTION_IDS = ["thresholds", "sync", "apiUrl", "notifications"];
   if (params.section && SHARED_SECTION_IDS.includes(params.section)) return params.section;
   if (params.orgsError || params.orgsSaved) return "orgs";
   if (params.credError || params.credSaved) return "credentials";
@@ -212,6 +213,26 @@ export default async function SettingsPage({
               Save
             </button>
           </form>
+        </div>
+      ),
+    },
+    {
+      id: "notifications",
+      label: "Slack notifications",
+      content: (
+        <div>
+          <SectionHeader
+            title="Slack notifications"
+            description="DMs a cluster's derived owner on age-status transitions, with optional turn-off/delete consent buttons."
+          />
+          {sharedBanner}
+          <NotificationsEditor
+            slackBotToken={settings.slackBotToken}
+            slackAppToken={settings.slackAppToken}
+            notificationsByTier={settings.notificationsByTier}
+            consentReminderMax={settings.consentReminderMax}
+            consentExpiryDays={settings.consentExpiryDays}
+          />
         </div>
       ),
     },

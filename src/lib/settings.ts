@@ -1,7 +1,17 @@
 import { promises as fs } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
-import { DEFAULT_SETTINGS, type OrgConfig, type Settings } from "../types";
+import {
+  DEFAULT_SETTINGS,
+  type NotifiableAgeStatus,
+  type NotificationsByTier,
+  type OrgConfig,
+  type Settings,
+  type TierNotificationConfig,
+} from "../types";
+
+/** "New" is deliberately excluded - see NotifiableAgeStatus. */
+const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Established", "Stale", "Forgotten"];
 
 const SETTINGS_FILE = "settings.json";
 
@@ -67,6 +77,18 @@ function isOrgConfigList(v: unknown): v is OrgConfig[] {
   });
 }
 
+function isTierNotificationConfig(v: unknown): v is TierNotificationConfig {
+  if (typeof v !== "object" || v === null) return false;
+  const { notify, askTurnOff, askDelete } = v as Record<string, unknown>;
+  return typeof notify === "boolean" && typeof askTurnOff === "boolean" && typeof askDelete === "boolean";
+}
+
+function isNotificationsByTier(v: unknown): v is NotificationsByTier {
+  if (typeof v !== "object" || v === null) return false;
+  const obj = v as Record<string, unknown>;
+  return NOTIFIABLE_TIERS.every((tier) => isTierNotificationConfig(obj[tier]));
+}
+
 /** Positive integers, strictly increasing so each age-status tier's window is non-empty. */
 export function validateSettings(input: unknown): Settings | null {
   if (typeof input !== "object" || input === null) return null;
@@ -82,6 +104,11 @@ export function validateSettings(input: unknown): Settings | null {
     dashboardUsername,
     dashboardPassword,
     sessionSecret,
+    slackBotToken,
+    slackAppToken,
+    notificationsByTier,
+    consentReminderMax,
+    consentExpiryDays,
   } = input as Record<string, unknown>;
 
   if (
@@ -104,6 +131,15 @@ export function validateSettings(input: unknown): Settings | null {
   if (!isNonEmptyString(dashboardPassword)) return null;
   if (!isNonEmptyString(sessionSecret)) return null;
 
+  // Empty string means "not configured yet" for both tokens - unlike the
+  // other required strings above, neither has a value before an operator
+  // sets one, and notifications simply don't fire until both do.
+  if (typeof slackBotToken !== "string") return null;
+  if (typeof slackAppToken !== "string") return null;
+  if (!isNotificationsByTier(notificationsByTier)) return null;
+  if (!isPositiveInteger(consentReminderMax)) return null;
+  if (!isPositiveInteger(consentExpiryDays)) return null;
+
   return {
     newDays,
     staleDays,
@@ -116,6 +152,11 @@ export function validateSettings(input: unknown): Settings | null {
     dashboardUsername,
     dashboardPassword,
     sessionSecret,
+    slackBotToken,
+    slackAppToken,
+    notificationsByTier,
+    consentReminderMax,
+    consentExpiryDays,
   };
 }
 

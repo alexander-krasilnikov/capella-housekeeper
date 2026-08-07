@@ -50,8 +50,30 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
   return result;
 }
 
+/** Fills in defaults for consent/notification fields absent on records written before this feature existed - see design.md Migration Plan. */
+function withConsentDefaults(record: ClusterRecord): ClusterRecord {
+  // The on-disk record may actually be missing these fields despite the
+  // static type claiming otherwise (older data pre-dates them) - read
+  // through a Partial view so the `??` fallbacks below are meaningful.
+  const partial = record as Partial<ClusterRecord>;
+  return {
+    ...record,
+    lastNotifiedAgeStatus: partial.lastNotifiedAgeStatus ?? null,
+    consentStatus: partial.consentStatus ?? "none",
+    consentCycleStartedAt: partial.consentCycleStartedAt ?? null,
+    remindersSent: partial.remindersSent ?? 0,
+    consentTierAtDecision: partial.consentTierAtDecision ?? null,
+    actionOutcome: partial.actionOutcome ?? "none",
+    slackChannelId: partial.slackChannelId ?? null,
+    slackMessageTs: partial.slackMessageTs ?? null,
+    snoozeUntil: partial.snoozeUntil ?? null,
+    snoozeJustification: partial.snoozeJustification ?? null,
+  };
+}
+
 export async function readClusters(): Promise<ClusterRecord[]> {
-  return readJsonFile<ClusterRecord[]>(clustersPath(), []);
+  const records = await readJsonFile<ClusterRecord[]>(clustersPath(), []);
+  return records.map(withConsentDefaults);
 }
 
 export async function readHistory(): Promise<ClusterSnapshot[]> {

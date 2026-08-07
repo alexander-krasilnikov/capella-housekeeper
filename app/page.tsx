@@ -6,6 +6,8 @@ import { ageDaysBetween, formatAge } from "@/lib/format";
 import { computeAgeStatus } from "@/lib/ageStatus";
 import ClusterTable, { type ClusterRow } from "./components/ClusterTable";
 import RefreshButton from "./components/RefreshButton";
+import SlackConnectionIndicator from "./components/SlackConnectionIndicator";
+import { getSlackBotStatus } from "@/lib/slackBot";
 import { logoutAction } from "./actions";
 
 // This page reads the local JSON store directly (not via fetch()), so
@@ -55,6 +57,10 @@ export default async function DashboardPage() {
       actualCostAsOfMs: c.actualCost.asOf ? new Date(c.actualCost.asOf).getTime() : null,
       actualCostUnavailableReason: c.actualCost.unavailableReason ?? null,
       statusLabel: formatStatusLabel(c.config.status),
+      consentStatus: c.consentStatus,
+      actionOutcome: c.actionOutcome,
+      snoozeUntilMs: c.snoozeUntil ? new Date(c.snoozeUntil).getTime() : null,
+      snoozeJustification: c.snoozeJustification,
       ageStatus: computeAgeStatus(
         ageDaysBetween(createdAtMs, now),
         lastActivityMs,
@@ -77,6 +83,7 @@ export default async function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <SlackConnectionIndicator initialStatus={getSlackBotStatus()} />
           <Link
             href="/settings"
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"

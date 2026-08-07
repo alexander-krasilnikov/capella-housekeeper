@@ -17,7 +17,8 @@ import {
   type VisibilityState,
 } from "@tanstack/react-table";
 import { formatUsd } from "@/lib/format";
-import type { AgeStatus } from "@/types";
+import SendConsentRequestButton from "./SendConsentRequestButton";
+import type { AgeStatus, ConsentActionOutcome, ConsentStatus } from "@/types";
 
 declare module "@tanstack/react-table" {
   interface ColumnMeta<TData, TValue> {
@@ -45,11 +46,34 @@ export interface ClusterRow {
   actualCostUnavailableReason: "credits-based" | "no-access" | "error" | null;
   statusLabel: string;
   ageStatus: AgeStatus;
+  consentStatus: ConsentStatus;
+  actionOutcome: ConsentActionOutcome;
+  snoozeUntilMs: number | null;
+  snoozeJustification: string | null;
   deleted: boolean;
   lastSyncedAtMs: number;
 }
 
 const AGE_STATUS_OPTIONS: AgeStatus[] = ["New", "Established", "Stale", "Forgotten"];
+
+type DetailGroup = "Organisation" | "Cluster" | "Workflow";
+const DETAIL_GROUPS: DetailGroup[] = ["Organisation", "Cluster", "Workflow"];
+
+/** Which group a column lands in when hidden from the main table and shown in the row detail panel instead - see the detail row rendering below. Anything not listed here (shouldn't happen for a real column id) falls back to "Cluster". */
+const DETAIL_GROUP_BY_COLUMN_ID: Record<string, DetailGroup> = {
+  org: "Organisation",
+  project: "Organisation",
+  name: "Cluster",
+  createdAt: "Cluster",
+  age: "Cluster",
+  lastActivity: "Cluster",
+  owner: "Cluster",
+  config: "Cluster",
+  actualCost: "Cluster",
+  status: "Cluster",
+  ageStatus: "Cluster",
+  consent: "Workflow",
+};
 
 const ACTUAL_COST_UNAVAILABLE_LABEL: Record<"credits-based" | "no-access" | "error", string> = {
   "credits-based": "Billed in credits",
@@ -106,6 +130,57 @@ function FormattedDateTime({ ms }: { ms: number | null }) {
   return <>{formatDateTime(ms)}</>;
 }
 
+/** Combines consentStatus and actionOutcome into one label+color - e.g. a "pending" decision reads differently from an "approved-turnoff" that's already been "performed" vs. merely "failed" and awaiting retry. */
+function describeConsent(
+  status: ConsentStatus,
+  outcome: ConsentActionOutcome,
+): { label: string; text: string; dot: string } {
+  if (status === "none") {
+    return { label: "—", text: "text-slate-400 dark:text-slate-500", dot: "bg-slate-300 dark:bg-slate-600" };
+  }
+  if (status === "pending") {
+    return { label: "Pending", text: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500" };
+  }
+  if (status === "expired") {
+    return { label: "Expired", text: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500" };
+  }
+  if (status === "snoozed") {
+    // No date baked in here deliberately - see FormattedDateTime's own
+    // comment on why locale-formatted dates can't render the same on the
+    // server and client without a hydration mismatch. The exact
+    // snooze-until date is shown in the row's detail panel instead, via
+    // FormattedDateTime, same as every other date in this table.
+    return { label: "Snoozed", text: "text-blue-600 dark:text-blue-400", dot: "bg-blue-500" };
+  }
+
+  const actionLabel = status === "approved-turnoff" ? "Turn off" : "Delete";
+  if (outcome === "performed") {
+    return {
+      label: status === "approved-turnoff" ? "Turned off" : "Deleted",
+      text: "text-emerald-600 dark:text-emerald-400",
+      dot: "bg-emerald-500",
+    };
+  }
+  if (outcome === "skipped") {
+    return { label: `${actionLabel} skipped`, text: "text-slate-500 dark:text-slate-400", dot: "bg-slate-400" };
+  }
+  if (outcome === "failed") {
+    return { label: `${actionLabel} failed`, text: "text-rose-600 dark:text-rose-400", dot: "bg-rose-500" };
+  }
+  return { label: `Approved: ${actionLabel}`, text: "text-blue-600 dark:text-blue-400", dot: "bg-blue-500" };
+}
+
+function ConsentBadge({ status, outcome }: { status: ConsentStatus; outcome: ConsentActionOutcome }) {
+  const style = describeConsent(status, outcome);
+  if (status === "none") return <span className={style.text}>{style.label}</span>;
+  return (
+    <span className={`inline-flex items-center gap-1.5 ${style.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+      {style.label}
+    </span>
+  );
+}
+
 /**
  * Search matches against the same display labels the user sees (not the
  * raw sort values, which are numbers for the cost columns) - checked once
@@ -127,6 +202,8 @@ const globalFuzzyFilter: FilterFn<ClusterRow> = (row, _columnId, filterValue) =>
     r.configSummary,
     actualCostDisplayLabel(r),
     r.deleted ? "deleted" : r.statusLabel,
+    describeConsent(r.consentStatus, r.actionOutcome).label,
+    r.snoozeJustification ?? "",
   ]
     .join(" ")
     .toLowerCase();
@@ -211,6 +288,17 @@ const columns = [
     meta: { widthPct: 7 },
     filterFn: "equalsString",
     cell: (info) => <AgeStatusBadge status={info.getValue()} />,
+  }),
+  columnHelper.accessor("consentStatus", {
+    id: "consent",
+    header: "Consent",
+    meta: { widthPct: 9 },
+    cell: (info) => (
+      <span className="inline-flex items-center gap-1.5">
+        <ConsentBadge status={info.getValue()} outcome={info.row.original.actionOutcome} />
+        {!info.row.original.deleted && <SendConsentRequestButton clusterId={info.row.original.clusterId} />}
+      </span>
+    ),
   }),
 ];
 
@@ -542,49 +630,104 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                   {detailOpenIds.has(row.original.clusterId) && (
                     <tr className="bg-slate-50 dark:bg-slate-900/60">
                       <td colSpan={row.getVisibleCells().length} className="px-4 py-3">
-                        <dl className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs sm:grid-cols-4">
-                          <div>
-                            <dt className="text-slate-400 dark:text-slate-500">Cluster ID</dt>
-                            <dd className="break-all text-slate-600 dark:text-slate-300">{row.original.clusterId}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-slate-400 dark:text-slate-500">Org ID</dt>
-                            <dd className="break-all text-slate-600 dark:text-slate-300">{row.original.orgId}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-slate-400 dark:text-slate-500">Project ID</dt>
-                            <dd className="break-all text-slate-600 dark:text-slate-300">{row.original.projectId}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-slate-400 dark:text-slate-500">Couchbase Version</dt>
-                            <dd className="text-slate-600 dark:text-slate-300">{row.original.couchbaseVersion}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-slate-400 dark:text-slate-500">Storage</dt>
-                            <dd className="text-slate-600 dark:text-slate-300">{row.original.storageSummary}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-slate-400 dark:text-slate-500">Last Synced</dt>
-                            <dd className="text-slate-600 dark:text-slate-300">
-                              {formatDateTime(row.original.lastSyncedAtMs)}
-                            </dd>
-                          </div>
-                          {hiddenColumnIds.map((columnId) => {
-                            const cell = row.getAllCells().find((c) => c.column.id === columnId);
-                            if (!cell) return null;
-                            const header = cell.column.columnDef.header;
+                        <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-3 sm:divide-x sm:divide-slate-200 dark:sm:divide-slate-800">
+                          {DETAIL_GROUPS.map((group) => {
+                            const hiddenFieldsForGroup = hiddenColumnIds
+                              .filter((columnId) => (DETAIL_GROUP_BY_COLUMN_ID[columnId] ?? "Cluster") === group)
+                              .map((columnId) => {
+                                const cell = row.getAllCells().find((c) => c.column.id === columnId);
+                                if (!cell) return null;
+                                const header = cell.column.columnDef.header;
+                                return (
+                                  <div key={columnId}>
+                                    <dt className="text-slate-400 dark:text-slate-500">
+                                      {typeof header === "string" ? header : columnId}
+                                    </dt>
+                                    <dd className="break-words text-slate-600 dark:text-slate-300">
+                                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                    </dd>
+                                  </div>
+                                );
+                              });
+
+                            const hasSnooze =
+                              row.original.snoozeUntilMs !== null || row.original.snoozeJustification !== null;
+                            const isEmpty = group === "Workflow" && !hasSnooze && hiddenFieldsForGroup.length === 0;
+
                             return (
-                              <div key={columnId}>
-                                <dt className="text-slate-400 dark:text-slate-500">
-                                  {typeof header === "string" ? header : columnId}
-                                </dt>
-                                <dd className="break-words text-slate-600 dark:text-slate-300">
-                                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                </dd>
+                              <div key={group} className="sm:first:pl-0 sm:[&:not(:first-child)]:pl-4">
+                                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                                  {group}
+                                </p>
+                                <dl className="flex flex-col gap-2">
+                                  {group === "Organisation" && (
+                                    <>
+                                      <div>
+                                        <dt className="text-slate-400 dark:text-slate-500">Org ID</dt>
+                                        <dd className="break-all text-slate-600 dark:text-slate-300">
+                                          {row.original.orgId}
+                                        </dd>
+                                      </div>
+                                      <div>
+                                        <dt className="text-slate-400 dark:text-slate-500">Project ID</dt>
+                                        <dd className="break-all text-slate-600 dark:text-slate-300">
+                                          {row.original.projectId}
+                                        </dd>
+                                      </div>
+                                    </>
+                                  )}
+                                  {group === "Cluster" && (
+                                    <>
+                                      <div>
+                                        <dt className="text-slate-400 dark:text-slate-500">Cluster ID</dt>
+                                        <dd className="break-all text-slate-600 dark:text-slate-300">
+                                          {row.original.clusterId}
+                                        </dd>
+                                      </div>
+                                      <div>
+                                        <dt className="text-slate-400 dark:text-slate-500">Couchbase Version</dt>
+                                        <dd className="text-slate-600 dark:text-slate-300">
+                                          {row.original.couchbaseVersion}
+                                        </dd>
+                                      </div>
+                                      <div>
+                                        <dt className="text-slate-400 dark:text-slate-500">Storage</dt>
+                                        <dd className="text-slate-600 dark:text-slate-300">
+                                          {row.original.storageSummary}
+                                        </dd>
+                                      </div>
+                                      <div>
+                                        <dt className="text-slate-400 dark:text-slate-500">Last Synced</dt>
+                                        <dd className="text-slate-600 dark:text-slate-300">
+                                          {formatDateTime(row.original.lastSyncedAtMs)}
+                                        </dd>
+                                      </div>
+                                    </>
+                                  )}
+                                  {group === "Workflow" && hasSnooze && (
+                                    <div>
+                                      <dt className="text-slate-400 dark:text-slate-500">Snooze</dt>
+                                      <dd className="text-slate-600 dark:text-slate-300">
+                                        {row.original.snoozeUntilMs !== null && (
+                                          <div>
+                                            Until <FormattedDateTime ms={row.original.snoozeUntilMs} />
+                                          </div>
+                                        )}
+                                        {row.original.snoozeJustification && (
+                                          <div className="break-words italic">
+                                            "{row.original.snoozeJustification}"
+                                          </div>
+                                        )}
+                                      </dd>
+                                    </div>
+                                  )}
+                                  {isEmpty && <p className="text-slate-300 dark:text-slate-600">—</p>}
+                                  {hiddenFieldsForGroup}
+                                </dl>
                               </div>
                             );
                           })}
-                        </dl>
+                        </div>
                       </td>
                     </tr>
                   )}

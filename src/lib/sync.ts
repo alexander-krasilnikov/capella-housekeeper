@@ -18,6 +18,7 @@ import {
   purgeExpiredTombstones,
 } from "./store";
 import { readSettings } from "./settings";
+import { applyConsentNotifications } from "./notifications";
 import type {
   ClusterRecord,
   ClusterSnapshot,
@@ -128,6 +129,41 @@ async function resolveOwner(
   }
 }
 
+/**
+ * Every field the Slack bot (button clicks) or the reconciliation loop can
+ * write to, independently of a sync cycle. Used to detect whether *this*
+ * cycle actually changed a cluster's consent state, or is just carrying
+ * forward a stale snapshot from before a slow cycle started - see the
+ * guard around the final upsertClusters call below.
+ */
+function consentFieldsEqual(a: ClusterRecord, b: ClusterRecord): boolean {
+  return (
+    a.lastNotifiedAgeStatus === b.lastNotifiedAgeStatus &&
+    a.consentStatus === b.consentStatus &&
+    a.consentCycleStartedAt === b.consentCycleStartedAt &&
+    a.remindersSent === b.remindersSent &&
+    a.consentTierAtDecision === b.consentTierAtDecision &&
+    a.actionOutcome === b.actionOutcome &&
+    a.slackChannelId === b.slackChannelId &&
+    a.slackMessageTs === b.slackMessageTs &&
+    a.snoozeUntil === b.snoozeUntil &&
+    a.snoozeJustification === b.snoozeJustification
+  );
+}
+
+function adoptConsentFields(record: ClusterRecord, source: ClusterRecord): void {
+  record.lastNotifiedAgeStatus = source.lastNotifiedAgeStatus;
+  record.consentStatus = source.consentStatus;
+  record.consentCycleStartedAt = source.consentCycleStartedAt;
+  record.remindersSent = source.remindersSent;
+  record.consentTierAtDecision = source.consentTierAtDecision;
+  record.actionOutcome = source.actionOutcome;
+  record.slackChannelId = source.slackChannelId;
+  record.slackMessageTs = source.slackMessageTs;
+  record.snoozeUntil = source.snoozeUntil;
+  record.snoozeJustification = source.snoozeJustification;
+}
+
 export interface SyncResult {
   syncedClusters: number;
   orgsSynced: number;
@@ -166,7 +202,8 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
   const failedOrgIds: string[] = [];
   const records: ClusterRecord[] = [];
   const snapshots: ClusterSnapshot[] = [];
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   const userDisplayNameCache = new Map<string, string>();
 
   for (const org of orgs) {
@@ -253,6 +290,19 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
           deletedAt: null,
           lastSyncedAt: now,
           lastObservedFingerprint: fp,
+          // Carried forward from the prior sync, not re-derived here -
+          // applyConsentNotifications (below) is the only thing that
+          // advances these, based on the *previous* cycle's values.
+          lastNotifiedAgeStatus: existing?.lastNotifiedAgeStatus ?? null,
+          consentStatus: existing?.consentStatus ?? "none",
+          consentCycleStartedAt: existing?.consentCycleStartedAt ?? null,
+          remindersSent: existing?.remindersSent ?? 0,
+          consentTierAtDecision: existing?.consentTierAtDecision ?? null,
+          actionOutcome: existing?.actionOutcome ?? "none",
+          slackChannelId: existing?.slackChannelId ?? null,
+          slackMessageTs: existing?.slackMessageTs ?? null,
+          snoozeUntil: existing?.snoozeUntil ?? null,
+          snoozeJustification: existing?.snoozeJustification ?? null,
         };
 
         records.push(record);
@@ -274,6 +324,28 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
     if (!seenOrgIds.has(existing.orgId)) continue;
     if (seenClusterIds.has(existing.clusterId)) continue;
     records.push({ ...existing, deletedAt: now, lastSyncedAt: now });
+  }
+
+  await applyConsentNotifications(records, settings, nowMs);
+
+  // This cycle's `records` carry consent fields forward from the
+  // existingById snapshot taken at the very top of this function, before a
+  // long sequence of awaited Capella API calls. If a Slack button click
+  // (or the reconciliation loop) wrote a real decision to disk while this
+  // cycle was still running, that snapshot is now stale for this cluster -
+  // blindly upserting `records` would silently revert it back to whatever
+  // it was before the click. So: re-read the current on-disk state right
+  // before writing, and for any cluster whose consent fields *this cycle
+  // left untouched* (equal to what it started with), defer to what's
+  // actually on disk now instead of the stale snapshot. A cluster this
+  // cycle's applyConsentNotifications genuinely changed keeps that change -
+  // it's a real decision made with fresh data, not a stale carry-forward.
+  const freshExisting = new Map((await readClusters()).map((c) => [c.clusterId, c]));
+  for (const record of records) {
+    const before = existingById.get(record.clusterId);
+    if (!before || !consentFieldsEqual(record, before)) continue;
+    const fresh = freshExisting.get(record.clusterId);
+    if (fresh) adoptConsentFields(record, fresh);
   }
 
   await upsertClusters(records);

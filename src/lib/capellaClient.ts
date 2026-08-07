@@ -14,19 +14,22 @@ export class CapellaApiError extends Error {
   }
 }
 
-async function request<T>(
+type CapellaMethod = "GET" | "POST" | "PUT" | "DELETE";
+
+/** Rate-limited, timed, authenticated fetch shared by every request shape below - callers interpret the response. */
+async function doFetch(
   org: OrgConfig,
   apiBaseUrl: string,
   pathSuffix: string,
-  init?: { method?: "GET" | "POST"; body?: unknown },
-): Promise<T> {
+  init?: { method?: CapellaMethod; body?: unknown },
+): Promise<Response> {
   await acquireSlot(org.apiKey);
 
   const isWrite = (init?.method ?? "GET") !== "GET";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), isWrite ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS);
   try {
-    const res = await fetch(`${apiBaseUrl}${pathSuffix}`, {
+    return await fetch(`${apiBaseUrl}${pathSuffix}`, {
       method: init?.method ?? "GET",
       headers: {
         Authorization: `Bearer ${org.apiKey}`,
@@ -36,26 +39,51 @@ async function request<T>(
       body: init?.body ? JSON.stringify(init.body) : undefined,
       signal: controller.signal,
     });
-    if (!res.ok) {
-      throw new CapellaApiError(
-        `Capella API ${pathSuffix} returned ${res.status}`,
-        res.status,
-      );
-    }
-
-    const contentType = res.headers.get("content-type") ?? "";
-    if (!contentType.includes("application/json")) {
-      const bodyPreview = (await res.text()).slice(0, 200);
-      throw new CapellaApiError(
-        `Capella API ${pathSuffix} returned non-JSON response (content-type: ${contentType || "none"}). ` +
-          `This usually means the configured Capella API base URL is wrong. Body preview: ${bodyPreview}`,
-        res.status,
-      );
-    }
-
-    return (await res.json()) as T;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function request<T>(
+  org: OrgConfig,
+  apiBaseUrl: string,
+  pathSuffix: string,
+  init?: { method?: CapellaMethod; body?: unknown },
+): Promise<T> {
+  const res = await doFetch(org, apiBaseUrl, pathSuffix, init);
+  if (!res.ok) {
+    throw new CapellaApiError(
+      `Capella API ${pathSuffix} returned ${res.status}`,
+      res.status,
+    );
+  }
+
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    const bodyPreview = (await res.text()).slice(0, 200);
+    throw new CapellaApiError(
+      `Capella API ${pathSuffix} returned non-JSON response (content-type: ${contentType || "none"}). ` +
+        `This usually means the configured Capella API base URL is wrong. Body preview: ${bodyPreview}`,
+      res.status,
+    );
+  }
+
+  return (await res.json()) as T;
+}
+
+/** For write operations confirmed (per the official OpenAPI spec) to return no body - a 202/204 with nothing to parse as JSON. */
+async function requestNoContent(
+  org: OrgConfig,
+  apiBaseUrl: string,
+  pathSuffix: string,
+  init: { method: CapellaMethod },
+): Promise<void> {
+  const res = await doFetch(org, apiBaseUrl, pathSuffix, init);
+  if (!res.ok) {
+    throw new CapellaApiError(
+      `Capella API ${pathSuffix} returned ${res.status}`,
+      res.status,
+    );
   }
 }
 
@@ -227,4 +255,45 @@ export async function getBillingUsage(
     }
     throw err;
   }
+}
+
+/**
+ * Turns a cluster off. Confirmed via the official OpenAPI spec
+ * (docs.couchbase.com/cloud/management-api-reference): DELETE against the
+ * cluster's `activationState` sub-resource, not the cluster itself -
+ * `POST` to that same path turns it back on. Returns 202 with no body.
+ */
+export async function turnOffCluster(
+  org: OrgConfig,
+  apiBaseUrl: string,
+  projectId: string,
+  clusterId: string,
+): Promise<void> {
+  await requestNoContent(
+    org,
+    apiBaseUrl,
+    `/organizations/${org.orgId}/projects/${projectId}/clusters/${clusterId}/activationState`,
+    { method: "DELETE" },
+  );
+}
+
+/**
+ * Deletes a cluster outright. Confirmed via the official OpenAPI spec
+ * (docs.couchbase.com/cloud/management-api-reference): DELETE against the
+ * cluster resource itself. Returns 202 with no body; fails with 422 if the
+ * cluster has deletion protection enabled - surfaced as a CapellaApiError,
+ * not retried automatically here.
+ */
+export async function deleteCluster(
+  org: OrgConfig,
+  apiBaseUrl: string,
+  projectId: string,
+  clusterId: string,
+): Promise<void> {
+  await requestNoContent(
+    org,
+    apiBaseUrl,
+    `/organizations/${org.orgId}/projects/${projectId}/clusters/${clusterId}`,
+    { method: "DELETE" },
+  );
 }

@@ -12,7 +12,12 @@ import {
 } from "@/lib/auth";
 import { runSyncCycle } from "@/lib/sync";
 import { readSettings, writeSettings } from "@/lib/settings";
-import type { OrgConfig } from "@/types";
+import { sendManualConsentRequest, type ManualConsentResult } from "@/lib/notifications";
+import { testSlackConnection, type SlackConnectionTestResult } from "@/lib/slack";
+import { getSlackBotStatus, reconnectSlackBot, type SlackBotStatus } from "@/lib/slackBot";
+import type { NotifiableAgeStatus, NotificationsByTier, OrgConfig } from "@/types";
+
+const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Established", "Stale", "Forgotten"];
 
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -154,6 +159,59 @@ export async function saveCredentialsAction(formData: FormData): Promise<void> {
 
   revalidatePath("/settings");
   redirect("/settings?credSaved=1");
+}
+
+export async function saveNotificationsAction(formData: FormData): Promise<void> {
+  const notificationsByTier: NotificationsByTier = Object.fromEntries(
+    NOTIFIABLE_TIERS.map((tier) => [
+      tier,
+      {
+        notify: formData.has(`notify_${tier}`),
+        askTurnOff: formData.has(`askTurnOff_${tier}`),
+        askDelete: formData.has(`askDelete_${tier}`),
+      },
+    ]),
+  ) as NotificationsByTier;
+
+  const result = await writeSettings({
+    slackBotToken: String(formData.get("slackBotToken") ?? ""),
+    slackAppToken: String(formData.get("slackAppToken") ?? ""),
+    notificationsByTier,
+    consentReminderMax: Number.parseInt(String(formData.get("consentReminderMax")), 10),
+    consentExpiryDays: Number.parseInt(String(formData.get("consentExpiryDays")), 10),
+  });
+  if (!result.ok) {
+    redirect(`/settings?section=notifications&error=${encodeURIComponent(result.error)}`);
+  }
+
+  revalidatePath("/settings");
+  redirect("/settings?section=notifications&saved=1");
+}
+
+/** Thin wrapper so the client component can call a proper Server Action - the real logic lives in src/lib/notifications.ts, shared with the automatic tier-transition path. */
+export async function sendConsentRequestAction(clusterId: string): Promise<ManualConsentResult> {
+  const result = await sendManualConsentRequest(clusterId);
+  if (result.ok) revalidatePath("/");
+  return result;
+}
+
+/** Polled by the client-side connection LED - see app/components/SlackConnectionIndicator.tsx. */
+export async function getSlackBotStatusAction(): Promise<SlackBotStatus> {
+  return getSlackBotStatus();
+}
+
+/** Manually forces the Socket Mode connection to close and reopen - an escape hatch alongside the automatic stuck-connection watchdog in slackBot.ts. */
+export async function reconnectSlackBotAction(): Promise<SlackBotStatus> {
+  await reconnectSlackBot().catch(() => undefined);
+  return getSlackBotStatus();
+}
+
+/** Tests the tokens currently typed into the settings form (not necessarily saved yet). */
+export async function testSlackConnectionAction(
+  botToken: string,
+  appToken: string,
+): Promise<SlackConnectionTestResult> {
+  return testSlackConnection(botToken, appToken);
 }
 
 export async function rotateSessionSecretAction(): Promise<void> {
