@@ -1,5 +1,5 @@
 import { turnOffCluster, deleteCluster, CapellaApiError } from "./capellaClient";
-import { readClusters, upsertClusters } from "./store";
+import { readClusters, upsertClusters, removeClusters, appendHistory } from "./store";
 import { readSettings } from "./settings";
 import { supersedeLiveMessage } from "./notifications";
 import type { ClusterRecord, Settings } from "../types";
@@ -18,9 +18,6 @@ async function resolveClusterAndOrg(
   const [clusters, settings] = await Promise.all([readClusters(), readSettings()]);
   const record = clusters.find((c) => c.clusterId === clusterId);
   if (!record) return { ok: false, result: { ok: false, message: "Cluster not found." } };
-  if (record.deletedAt !== null) {
-    return { ok: false, result: { ok: false, message: `${record.clusterName} has already been deleted.` } };
-  }
   if (!settings.capellaOrgs.some((org) => org.orgId === record.orgId)) {
     return {
       ok: false,
@@ -83,8 +80,9 @@ export async function manualDelete(clusterId: string): Promise<ManualActionResul
 
   const fresh = (await readClusters()).find((c) => c.clusterId === clusterId);
   if (fresh) {
-    fresh.deletedAt = new Date().toISOString();
-    await upsertClusters([fresh]);
+    const now = new Date().toISOString();
+    await appendHistory([{ clusterId, takenAt: now, record: { ...fresh, deletedAt: now, lastSyncedAt: now } }]);
+    await removeClusters([clusterId]);
   }
 
   return { ok: true, message: `Deleted ${record.clusterName}.` };

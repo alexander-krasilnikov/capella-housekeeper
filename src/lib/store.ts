@@ -100,48 +100,42 @@ export async function upsertClusters(incoming: ClusterRecord[]): Promise<void> {
   });
 }
 
+/** Removes clusters from the live collection outright - used once a cluster's final state has been captured to history, rather than leaving a tombstone in place. `upsertClusters` only ever merges/overwrites; it has no way to make an entry disappear. */
+export async function removeClusters(clusterIds: string[]): Promise<void> {
+  if (clusterIds.length === 0) return;
+  return serialize(async () => {
+    const existing = await readJsonFile<ClusterRecord[]>(clustersPath(), []);
+    const toRemove = new Set(clusterIds);
+    const kept = existing.filter((c) => !toRemove.has(c.clusterId));
+    if (kept.length !== existing.length) {
+      await writeJsonFileAtomic(clustersPath(), kept);
+    }
+  });
+}
+
 /**
- * Removes tombstoned clusters whose deletedAt is older than the retention
- * window (along with their snapshot history), and separately trims history
- * snapshots older than that same window for every cluster, active or not -
- * without this second part, an active cluster's history grows by one entry
- * per sync cycle forever, since nothing else ever prunes it.
+ * Trims history snapshots older than the retention window, for every
+ * cluster, active or deleted alike - without this, an active cluster's
+ * history grows by one entry per sync cycle forever, since nothing else
+ * ever prunes it. A deleted cluster's final snapshot (see sync.ts/
+ * manualActions.ts) ages out the same way as any other, once removed from
+ * the live store there's no separate tombstone to purge here anymore.
  */
-export async function purgeExpiredTombstones(now: Date, retentionDays: number): Promise<{
-  purgedClusterIds: string[];
+export async function purgeExpiredHistory(now: Date, retentionDays: number): Promise<{
+  purgedSnapshotCount: number;
 }> {
   return serialize(async () => {
-    const [clusters, history] = await Promise.all([
-      readJsonFile<ClusterRecord[]>(clustersPath(), []),
-      readJsonFile<ClusterSnapshot[]>(historyPath(), []),
-    ]);
-
+    const history = await readJsonFile<ClusterSnapshot[]>(historyPath(), []);
     const cutoffMs = retentionDays * 24 * 60 * 60 * 1000;
-    const purgedClusterIds: string[] = [];
 
-    const keptClusters = clusters.filter((c) => {
-      if (!c.deletedAt) return true;
-      const age = now.getTime() - new Date(c.deletedAt).getTime();
-      if (age > cutoffMs) {
-        purgedClusterIds.push(c.clusterId);
-        return false;
-      }
-      return true;
-    });
+    const keptHistory = history.filter(
+      (h) => now.getTime() - new Date(h.takenAt).getTime() <= cutoffMs,
+    );
 
-    const purgedSet = new Set(purgedClusterIds);
-    const keptHistory = history.filter((h) => {
-      if (purgedSet.has(h.clusterId)) return false;
-      return now.getTime() - new Date(h.takenAt).getTime() <= cutoffMs;
-    });
-
-    if (purgedClusterIds.length > 0) {
-      await writeJsonFileAtomic(clustersPath(), keptClusters);
-    }
     if (keptHistory.length !== history.length) {
       await writeJsonFileAtomic(historyPath(), keptHistory);
     }
 
-    return { purgedClusterIds };
+    return { purgedSnapshotCount: history.length - keptHistory.length };
   });
 }

@@ -22,8 +22,8 @@ export function startSyncScheduler(): void {
       const result = await runSyncCycle();
       console.log(
         `[sync] synced ${result.syncedClusters} clusters across ${result.orgsSynced} org(s)` +
-          (result.purgedClusterIds.length
-            ? `, purged ${result.purgedClusterIds.length} expired tombstone(s)`
+          (result.removedClusterIds.length
+            ? `, ${result.removedClusterIds.length} no longer on Capella and removed`
             : "") +
           (result.failedOrgIds.length ? `, ${result.failedOrgIds.length} org(s) failed: ${result.failedOrgIds.join(", ")}` : ""),
       );

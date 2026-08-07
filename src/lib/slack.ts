@@ -1,5 +1,5 @@
 import { WebClient } from "@slack/web-api";
-import { ageDaysBetween } from "./format";
+import { ageDaysBetween, ageHoursBetween } from "./format";
 import { formatStatusLabel } from "./configSummary";
 import type { ClusterRecord, NotifiableAgeStatus, Settings, TierNotificationConfig } from "../types";
 
@@ -55,19 +55,17 @@ function confirmDialog(action: ConsentAction, clusterName: string) {
   };
 }
 
-/** Plain-language explanation of what the tier means and why this cluster is in it, parameterized by the operator's actual configured thresholds rather than a hardcoded description. */
+/** Plain-language explanation of what the tier means and why this cluster is in it, parameterized by the operator's actual configured thresholds rather than a hardcoded description. Stated in hours, matching the settings fields exactly, rather than converted to a rounded day figure that could read as a different number than what's actually configured. */
 function describeTier(
   tier: NotifiableAgeStatus,
-  ageDays: number,
-  settings: Pick<Settings, "staleDays" | "forgottenDays" | "inactivityGraceDays">,
+  ageHours: number,
+  settings: Pick<Settings, "activityGraceHours" | "forgottenHours">,
 ): string {
   switch (tier) {
-    case "Established":
-      return `It's classified *Established*: either younger than the ${settings.staleDays}-day "Stale" threshold, or it's had activity within the last ${settings.inactivityGraceDays} day(s). It looks actively used.`;
     case "Stale":
-      return `It's classified *Stale*: it's ${ageDays} day(s) old (past the ${settings.staleDays}-day threshold) with no activity in the last ${settings.inactivityGraceDays} day(s), or no activity data at all. It may not be needed anymore.`;
+      return `It's classified *Stale*: it's ${ageHours} hour(s) old with no activity in the last ${settings.activityGraceHours} hour(s), or no activity data at all. It may not be needed anymore.`;
     case "Forgotten":
-      return `It's classified *Forgotten*: it's ${ageDays} day(s) old, well past the ${settings.forgottenDays}-day threshold, with no recent activity. It's a strong candidate for cleanup.`;
+      return `It's classified *Forgotten*: it's ${ageHours} hour(s) old, well past the ${settings.forgottenHours}-hour threshold, with no recent activity. It's a strong candidate for cleanup.`;
   }
 }
 
@@ -99,8 +97,17 @@ function describeLastActivity(cluster: ClusterRecord, nowMs: number): string {
   if (!cluster.lastActivityAt || cluster.lastActivitySource === "unknown") {
     return "No reliable activity history is available for this cluster, so its status is based on age alone.";
   }
-  const days = ageDaysBetween(new Date(cluster.lastActivityAt).getTime(), nowMs);
-  const when = days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+  const lastActivityMs = new Date(cluster.lastActivityAt).getTime();
+  const days = ageDaysBetween(lastActivityMs, nowMs);
+  let when: string;
+  if (days < 1) {
+    const hours = ageHoursBetween(lastActivityMs, nowMs);
+    when = hours <= 0 ? "less than an hour ago" : `${hours}h ago`;
+  } else if (days === 1) {
+    when = "1 day ago";
+  } else {
+    when = `${days} days ago`;
+  }
   const sourceNote =
     cluster.lastActivitySource === "activity-log"
       ? "from Capella's activity log"
@@ -114,17 +121,17 @@ function describeLastActivity(cluster: ClusterRecord, nowMs: number): string {
  * auto-deletes on expiry (only an explicit approval ever reaches the
  * reconciliation loop) - explicitly says so, rather than leaving that
  * ambiguous. For "Forgotten" specifically, adds that the cluster has
- * already exceeded its configured grace period (the staleDays/forgottenDays
- * thresholds), so it'll keep resurfacing until it's acted on or shows
+ * already exceeded its configured grace period (the forgottenHours
+ * threshold), so it'll keep resurfacing until it's acted on or shows
  * renewed activity.
  */
 function describeNoResponseConsequence(
   tier: NotifiableAgeStatus,
-  settings: Pick<Settings, "forgottenDays" | "consentReminderMax" | "consentExpiryDays">,
+  settings: Pick<Settings, "forgottenHours" | "consentReminderMax" | "consentExpiryDays">,
 ): string {
   const base = `If you don't respond, you'll get up to ${settings.consentReminderMax} reminder(s) over the next ${settings.consentExpiryDays} day(s). After that, this request simply expires - *no action is taken automatically*, the cluster is left exactly as it is, and you won't be asked again until its status changes.`;
   if (tier !== "Forgotten") return base;
-  return `${base} This cluster has already exceeded the configured Forgotten grace period (${settings.forgottenDays}+ days with no recent activity), so expect it to keep resurfacing on future reviews until it's turned off, deleted, or shows renewed activity.`;
+  return `${base} This cluster has already exceeded the configured Forgotten grace period (${settings.forgottenHours}+ hours with no recent activity), so expect it to keep resurfacing on future reviews until it's turned off, deleted, or shows renewed activity.`;
 }
 
 export interface ConsentMessageInput {
@@ -133,10 +140,7 @@ export interface ConsentMessageInput {
   tierConfig: TierNotificationConfig;
   isReminder: boolean;
   nowMs: number;
-  settings: Pick<
-    Settings,
-    "staleDays" | "forgottenDays" | "inactivityGraceDays" | "consentReminderMax" | "consentExpiryDays"
-  >;
+  settings: Pick<Settings, "activityGraceHours" | "forgottenHours" | "consentReminderMax" | "consentExpiryDays">;
 }
 
 export interface SlackMessage {
@@ -154,12 +158,12 @@ export interface SlackMessage {
  * cluster-consent-notifications spec.
  */
 export function buildConsentMessage({ cluster, tier, tierConfig, isReminder, nowMs, settings }: ConsentMessageInput): SlackMessage {
-  const ageDays = ageDaysBetween(new Date(cluster.createdAt).getTime(), nowMs);
+  const ageHours = ageHoursBetween(new Date(cluster.createdAt).getTime(), nowMs);
   const heading = isReminder
     ? `:bell: Reminder - *${cluster.clusterName}* still needs a decision`
     : `:broom: Housekeeping alert for cluster *${cluster.clusterName}*`;
   const stateLine = describeCurrentState(cluster.config.status);
-  const tierLine = describeTier(tier, ageDays, settings);
+  const tierLine = describeTier(tier, ageHours, settings);
   const activityLine = describeLastActivity(cluster, nowMs);
   const noResponseLine = describeNoResponseConsequence(tier, settings);
 

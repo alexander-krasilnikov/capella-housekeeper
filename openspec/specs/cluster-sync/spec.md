@@ -72,24 +72,6 @@ The system SHALL record a last-activity timestamp for each cluster, sourced from
 - **WHEN** the Capella Activity Log cannot be retrieved through the Management API
 - **THEN** the system falls back to the timestamp of the last state or configuration change it observed during sync, and marks the field as approximate
 
-### Requirement: Deleted cluster tombstoning
-The system SHALL retain a tombstoned record of a cluster's last known state when that cluster is no longer returned by the Capella API, instead of deleting the record immediately.
-
-#### Scenario: Cluster removed from Capella
-- **WHEN** a previously known cluster is no longer present in the Capella API response for its organization/project
-- **THEN** the system marks its stored record as deleted and preserves its last known state and snapshot history
-
-### Requirement: History and tombstone retention
-The system SHALL purge a tombstoned cluster's record and its historical snapshots after a configurable retention period, defaulting to 7 days from the time it was marked deleted.
-
-#### Scenario: Retention period elapsed
-- **WHEN** a tombstoned cluster record has been marked deleted for longer than the configured retention period
-- **THEN** the system permanently removes that record and its snapshot history from the local store
-
-#### Scenario: Retention period not yet elapsed
-- **WHEN** a tombstoned cluster record has been marked deleted for less than the configured retention period
-- **THEN** the record remains visible and queryable, flagged as deleted
-
 ### Requirement: Organizations, sync interval, and retention are read from live settings
 The system SHALL read the configured organizations, sync interval, and retention period from current settings at the start of each sync cycle, rather than from fixed values captured once at process start.
 
@@ -107,4 +89,26 @@ The system SHALL run a sync cycle that polls nothing, without error, when zero o
 #### Scenario: Fresh install with no organizations configured
 - **WHEN** the dashboard starts with zero organizations configured
 - **THEN** the sync cycle completes without error and the cluster table shows its existing empty state
+
+### Requirement: Deletion writes a final history snapshot, not a live tombstone
+The system SHALL, when a previously known cluster is no longer present in the Capella API response for its organization/project, write one history snapshot capturing its last known state stamped with the time of removal, and SHALL remove the cluster's record from the live store in the same operation rather than marking it deleted in place.
+
+#### Scenario: Cluster removed from Capella
+- **WHEN** a previously known cluster is no longer present in the Capella API response for its organization/project
+- **THEN** a final history snapshot is recorded for it and its record is removed from the live store
+
+#### Scenario: Manual deletion behaves the same as sync-detected deletion
+- **WHEN** an operator manually deletes a cluster from the dashboard and the Capella delete call succeeds
+- **THEN** a final history snapshot is recorded for it and its record is removed from the live store, identically to a deletion sync later discovers on its own
+
+### Requirement: History retention is independent of deletion
+The system SHALL purge a history snapshot once it is older than the configured retention period (defaulting to 7 days), regardless of whether the cluster it belongs to is still present in the live store.
+
+#### Scenario: A deleted cluster's final snapshot ages out
+- **WHEN** a cluster's final history snapshot has been recorded for longer than the configured retention period
+- **THEN** that snapshot is permanently removed from history
+
+#### Scenario: An active cluster's older snapshots age out the same way
+- **WHEN** a cluster still present in the live store has history snapshots older than the configured retention period
+- **THEN** those snapshots are permanently removed from history while the cluster's live record is unaffected
 

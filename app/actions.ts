@@ -18,7 +18,7 @@ import { testSlackConnection, type SlackConnectionTestResult } from "@/lib/slack
 import { getSlackBotStatus, reconnectSlackBot, type SlackBotStatus } from "@/lib/slackBot";
 import type { NotifiableAgeStatus, NotificationsByTier, OrgConfig } from "@/types";
 
-const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Established", "Stale", "Forgotten"];
+const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Stale", "Forgotten"];
 
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -57,15 +57,15 @@ export async function refreshAction(): Promise<RefreshResult> {
   try {
     const result = await runSyncCycle();
     revalidatePath("/");
-    const purgedNote =
-      result.purgedClusterIds.length > 0
-        ? `, purged ${result.purgedClusterIds.length} expired tombstone(s)`
+    const removedNote =
+      result.removedClusterIds.length > 0
+        ? `, ${result.removedClusterIds.length} no longer on Capella and removed`
         : "";
     const failedNote =
       result.failedOrgIds.length > 0 ? `, ${result.failedOrgIds.length} org(s) failed and were skipped` : "";
     return {
       ok: true,
-      message: `Synced ${result.syncedClusters} cluster(s) across ${result.orgsSynced} org(s)${purgedNote}${failedNote}`,
+      message: `Synced ${result.syncedClusters} cluster(s) across ${result.orgsSynced} org(s)${removedNote}${failedNote}`,
     };
   } catch (err) {
     return {
@@ -76,10 +76,8 @@ export async function refreshAction(): Promise<RefreshResult> {
 }
 
 const INT_SETTINGS_FIELDS = [
-  "newDays",
-  "staleDays",
-  "forgottenDays",
-  "inactivityGraceDays",
+  "activityGraceHours",
+  "forgottenHours",
   "syncIntervalHours",
   "retentionDays",
 ] as const;

@@ -10,8 +10,8 @@ import {
   type TierNotificationConfig,
 } from "../types";
 
-/** "New" is deliberately excluded - see NotifiableAgeStatus. */
-const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Established", "Stale", "Forgotten"];
+/** "In Use" is deliberately excluded - see NotifiableAgeStatus. */
+const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Stale", "Forgotten"];
 
 const SETTINGS_FILE = "settings.json";
 
@@ -93,10 +93,8 @@ function isNotificationsByTier(v: unknown): v is NotificationsByTier {
 export function validateSettings(input: unknown): Settings | null {
   if (typeof input !== "object" || input === null) return null;
   const {
-    newDays,
-    staleDays,
-    forgottenDays,
-    inactivityGraceDays,
+    activityGraceHours,
+    forgottenHours,
     capellaOrgs,
     capellaApiBaseUrl,
     syncIntervalHours,
@@ -111,15 +109,10 @@ export function validateSettings(input: unknown): Settings | null {
     consentExpiryDays,
   } = input as Record<string, unknown>;
 
-  if (
-    !isPositiveInteger(newDays) ||
-    !isPositiveInteger(staleDays) ||
-    !isPositiveInteger(forgottenDays) ||
-    !isPositiveInteger(inactivityGraceDays)
-  ) {
+  if (!isPositiveInteger(activityGraceHours) || !isPositiveInteger(forgottenHours)) {
     return null;
   }
-  if (!(newDays < staleDays && staleDays < forgottenDays)) {
+  if (!(activityGraceHours < forgottenHours)) {
     return null;
   }
 
@@ -141,10 +134,8 @@ export function validateSettings(input: unknown): Settings | null {
   if (!isPositiveInteger(consentExpiryDays)) return null;
 
   return {
-    newDays,
-    staleDays,
-    forgottenDays,
-    inactivityGraceDays,
+    activityGraceHours,
+    forgottenHours,
     capellaOrgs: capellaOrgs.map((o) => ({ orgId: o.orgId, orgName: o.orgName, apiKey: o.apiKey })),
     capellaApiBaseUrl,
     syncIntervalHours,
@@ -161,6 +152,42 @@ export function validateSettings(input: unknown): Settings | null {
 }
 
 /**
+ * One-time migration for settings written before the age-status model
+ * moved from four day-based thresholds (`newDays`/`staleDays`/
+ * `forgottenDays`/`inactivityGraceDays`) to two hour-based ones - see the
+ * collapse-age-status-tiers change. `newDays`/`staleDays` have no
+ * equivalent in the new model and are dropped; `forgottenDays` and
+ * `inactivityGraceDays` are unit-converted (×24) into their closest new
+ * counterparts. A legacy "Established" entry in `notificationsByTier` is
+ * dropped too, since "In Use" isn't configurable. No-ops once a settings
+ * object already has `activityGraceHours`/`forgottenHours`.
+ */
+function migrateLegacyAgeSettings(rawObj: Record<string, unknown>): Record<string, unknown> {
+  if (isPositiveInteger(rawObj.activityGraceHours) && isPositiveInteger(rawObj.forgottenHours)) {
+    return rawObj;
+  }
+
+  const migrated = { ...rawObj };
+  if (isPositiveInteger(rawObj.inactivityGraceDays)) {
+    migrated.activityGraceHours = rawObj.inactivityGraceDays * 24;
+  }
+  if (isPositiveInteger(rawObj.forgottenDays)) {
+    migrated.forgottenHours = rawObj.forgottenDays * 24;
+  }
+  delete migrated.newDays;
+  delete migrated.staleDays;
+  delete migrated.forgottenDays;
+  delete migrated.inactivityGraceDays;
+
+  if (typeof migrated.notificationsByTier === "object" && migrated.notificationsByTier !== null) {
+    const { Established, ...rest } = migrated.notificationsByTier as Record<string, unknown>;
+    migrated.notificationsByTier = rest;
+  }
+
+  return migrated;
+}
+
+/**
  * Falls back to (and persists) defaults when the file is missing or fails
  * validation outright. When the file is valid except for missing newer
  * fields (e.g. upgrading from a version that only had age-status
@@ -169,7 +196,11 @@ export function validateSettings(input: unknown): Settings | null {
  * but a merely *incomplete* file doesn't.
  */
 export async function readSettings(): Promise<Settings> {
-  const raw = await readJsonFileOrNull<unknown>(settingsPath());
+  const rawFile = await readJsonFileOrNull<unknown>(settingsPath());
+  const raw =
+    rawFile !== null && typeof rawFile === "object"
+      ? migrateLegacyAgeSettings(rawFile as Record<string, unknown>)
+      : rawFile;
 
   if (raw !== null) {
     const validated = validateSettings(raw);

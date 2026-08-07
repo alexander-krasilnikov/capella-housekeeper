@@ -1,4 +1,4 @@
-import { ageDaysBetween } from "./format";
+import { ageHoursBetween } from "./format";
 import { computeAgeStatus } from "./ageStatus";
 import { buildConsentMessage, isAlreadyOff, sendConsentDM, updateMessage } from "./slack";
 import { readClusters, upsertClusters } from "./store";
@@ -17,7 +17,7 @@ export function computeRecordAgeStatus(record: ClusterRecord, settings: Settings
   const createdAtMs = new Date(record.createdAt).getTime();
   const lastActivityMs = record.lastActivityAt ? new Date(record.lastActivityAt).getTime() : null;
   return computeAgeStatus(
-    ageDaysBetween(createdAtMs, nowMs),
+    ageHoursBetween(createdAtMs, nowMs),
     lastActivityMs,
     record.lastActivitySource,
     nowMs,
@@ -71,8 +71,6 @@ export async function applyConsentNotifications(
   nowMs: number,
 ): Promise<void> {
   for (const record of records) {
-    if (record.deletedAt !== null) continue;
-
     const tier = computeRecordAgeStatus(record, settings, nowMs);
 
     if (tier !== record.lastNotifiedAgeStatus) {
@@ -89,7 +87,7 @@ export async function applyConsentNotifications(
       record.snoozeUntil = null;
       record.snoozeJustification = null;
 
-      if (tier !== "New" && settings.notificationsByTier[tier].notify) {
+      if (tier !== "In Use" && settings.notificationsByTier[tier].notify) {
         const sent = await trySendNotification(record, tier, settings, false, nowMs);
         if (sent) {
           record.consentStatus = "pending";
@@ -110,7 +108,7 @@ export async function applyConsentNotifications(
       record.consentTierAtDecision = null;
       record.actionOutcome = "none";
 
-      if (tier !== "New" && settings.notificationsByTier[tier].notify) {
+      if (tier !== "In Use" && settings.notificationsByTier[tier].notify) {
         const sent = await trySendNotification(record, tier, settings, false, nowMs);
         if (sent) {
           record.consentStatus = "pending";
@@ -125,10 +123,10 @@ export async function applyConsentNotifications(
     }
 
     if (record.consentStatus !== "pending" || !record.consentCycleStartedAt) continue;
-    // "pending" is never set for "New" (see the transition/snooze-reset
+    // "pending" is never set for "In Use" (see the transition/snooze-reset
     // branches above) - this is just proving that invariant to TypeScript
     // so trySendNotification below can take the narrower NotifiableAgeStatus.
-    if (tier === "New") continue;
+    if (tier === "In Use") continue;
 
     const ageMs = nowMs - new Date(record.consentCycleStartedAt).getTime();
     const expiryMs = settings.consentExpiryDays * DAY_MS;
@@ -177,8 +175,8 @@ export async function sendManualConsentRequest(clusterId: string): Promise<Manua
 
   const nowMs = Date.now();
   const tier = computeRecordAgeStatus(record, settings, nowMs);
-  if (tier === "New") {
-    return { ok: false, message: "New clusters aren't eligible for consent requests." };
+  if (tier === "In Use") {
+    return { ok: false, message: "Clusters currently classified 'In Use' aren't eligible for consent requests." };
   }
   const tierConfig = settings.notificationsByTier[tier];
 

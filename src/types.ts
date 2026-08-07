@@ -100,7 +100,7 @@ export interface StoreData {
   history: ClusterSnapshot[];
 }
 
-export type AgeStatus = "New" | "Established" | "Stale" | "Forgotten";
+export type AgeStatus = "In Use" | "Stale" | "Forgotten";
 
 export interface TierNotificationConfig {
   notify: boolean;
@@ -108,16 +108,16 @@ export interface TierNotificationConfig {
   askDelete: boolean;
 }
 
-/** "New" clusters are never notification-eligible - too young to be a housekeeping candidate - so it's excluded from configuration entirely rather than merely defaulted off. */
-export type NotifiableAgeStatus = Exclude<AgeStatus, "New">;
+/** "In Use" clusters are never notification-eligible - there's nothing to ask about a cluster with evidence of active use - so it's excluded from configuration entirely rather than merely defaulted off. */
+export type NotifiableAgeStatus = Exclude<AgeStatus, "In Use">;
 
 export type NotificationsByTier = Record<NotifiableAgeStatus, TierNotificationConfig>;
 
 export interface Settings {
-  newDays: number;
-  staleDays: number;
-  forgottenDays: number;
-  inactivityGraceDays: number;
+  /** How fresh a cluster's last-known activity (real, or its own creation date standing in when no real signal exists) must be to count as "In Use". */
+  activityGraceHours: number;
+  /** How long with no evidence of use before a cluster escalates from "Stale" to "Forgotten". */
+  forgottenHours: number;
   capellaOrgs: OrgConfig[];
   capellaApiBaseUrl: string;
   syncIntervalHours: number;
@@ -145,7 +145,6 @@ const DEFAULT_TIER_NOTIFICATION_CONFIG: TierNotificationConfig = {
 };
 
 const DEFAULT_NOTIFICATIONS_BY_TIER: NotificationsByTier = {
-  Established: { ...DEFAULT_TIER_NOTIFICATION_CONFIG },
   Stale: { ...DEFAULT_TIER_NOTIFICATION_CONFIG },
   Forgotten: { ...DEFAULT_TIER_NOTIFICATION_CONFIG },
 };
@@ -156,10 +155,8 @@ const DEFAULT_NOTIFICATIONS_BY_TIER: NotificationsByTier = {
  * fresh at first-seed time in settings.ts instead of living here.
  */
 export const DEFAULT_SETTINGS: Omit<Settings, "sessionSecret"> = {
-  newDays: 1,
-  staleDays: 2,
-  forgottenDays: 3,
-  inactivityGraceDays: 1,
+  activityGraceHours: 24,
+  forgottenHours: 72,
   capellaOrgs: [],
   capellaApiBaseUrl: "https://cloudapi.cloud.couchbase.com/v4",
   syncIntervalHours: 1,

@@ -53,11 +53,10 @@ export interface ClusterRow {
   actionOutcome: ConsentActionOutcome;
   snoozeUntilMs: number | null;
   snoozeJustification: string | null;
-  deleted: boolean;
   lastSyncedAtMs: number;
 }
 
-const AGE_STATUS_OPTIONS: AgeStatus[] = ["New", "Established", "Stale", "Forgotten"];
+const AGE_STATUS_OPTIONS: AgeStatus[] = ["In Use", "Stale", "Forgotten"];
 
 type DetailGroup = "Organisation" | "Cluster" | "Workflow";
 const DETAIL_GROUPS: DetailGroup[] = ["Organisation", "Cluster", "Workflow"];
@@ -204,7 +203,7 @@ const globalFuzzyFilter: FilterFn<ClusterRow> = (row, _columnId, filterValue) =>
     r.owner,
     r.configSummary,
     actualCostDisplayLabel(r),
-    r.deleted ? "deleted" : r.statusLabel,
+    r.statusLabel,
     describeConsent(r.consentStatus, r.actionOutcome).label,
     r.snoozeJustification ?? "",
   ]
@@ -277,13 +276,11 @@ const columns = [
       );
     },
   }),
-  columnHelper.accessor((row) => (row.deleted ? "Deleted" : row.statusLabel), {
+  columnHelper.accessor("statusLabel", {
     id: "status",
     header: "Status",
     meta: { widthPct: 6 },
-    cell: (info) => (
-      <StatusBadge deleted={info.row.original.deleted} statusLabel={info.row.original.statusLabel} />
-    ),
+    cell: (info) => <StatusBadge statusLabel={info.getValue()} />,
   }),
   columnHelper.accessor("ageStatus", {
     id: "ageStatus",
@@ -299,7 +296,7 @@ const columns = [
     cell: (info) => (
       <span className="inline-flex items-center gap-1.5">
         <ConsentBadge status={info.getValue()} outcome={info.row.original.actionOutcome} />
-        {!info.row.original.deleted && <SendConsentRequestButton clusterId={info.row.original.clusterId} />}
+        <SendConsentRequestButton clusterId={info.row.original.clusterId} />
       </span>
     ),
   }),
@@ -594,11 +591,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
             <tbody>
               {pageRows.map((row) => (
                 <Fragment key={row.id}>
-                  <tr
-                    className={`border-b border-slate-100 align-top transition last:border-0 dark:border-slate-800 ${
-                      row.original.deleted ? "opacity-50" : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                    }`}
-                  >
+                  <tr className="border-b border-slate-100 align-top transition last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
                     {row.getVisibleCells().map((cell) => {
                       if (cell.column.id === "expander") {
                         return (
@@ -705,23 +698,21 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                                           {formatDateTime(row.original.lastSyncedAtMs)}
                                         </dd>
                                       </div>
-                                      {!row.original.deleted && (
-                                        <div>
-                                          <dt className="text-slate-400 dark:text-slate-500">Actions</dt>
-                                          <dd className="flex flex-wrap items-center gap-2">
-                                            {!row.original.statusIsOff && (
-                                              <ManualTurnOffButton
-                                                clusterId={row.original.clusterId}
-                                                clusterName={row.original.name}
-                                              />
-                                            )}
-                                            <ManualDeleteButton
+                                      <div>
+                                        <dt className="text-slate-400 dark:text-slate-500">Actions</dt>
+                                        <dd className="flex flex-wrap items-center gap-2">
+                                          {!row.original.statusIsOff && (
+                                            <ManualTurnOffButton
                                               clusterId={row.original.clusterId}
                                               clusterName={row.original.name}
                                             />
-                                          </dd>
-                                        </div>
-                                      )}
+                                          )}
+                                          <ManualDeleteButton
+                                            clusterId={row.original.clusterId}
+                                            clusterName={row.original.name}
+                                          />
+                                        </dd>
+                                      </div>
                                     </>
                                   )}
                                   {group === "Workflow" && hasSnooze && (
@@ -803,16 +794,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
   );
 }
 
-function StatusBadge({ deleted, statusLabel }: { deleted: boolean; statusLabel: string }) {
-  if (deleted) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
-        <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
-        Deleted
-      </span>
-    );
-  }
-
+function StatusBadge({ statusLabel }: { statusLabel: string }) {
   const isOff = /off/i.test(statusLabel);
   const isActive = statusLabel === "Active" || /healthy|running|ready/i.test(statusLabel);
 
@@ -832,8 +814,7 @@ function StatusBadge({ deleted, statusLabel }: { deleted: boolean; statusLabel: 
 }
 
 const AGE_STATUS_STYLE: Record<AgeStatus, { text: string; dot: string }> = {
-  New: { text: "text-slate-500 dark:text-slate-400", dot: "bg-slate-400" },
-  Established: { text: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
+  "In Use": { text: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
   Stale: { text: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
   Forgotten: { text: "text-rose-600 dark:text-rose-400", dot: "bg-rose-500" },
 };

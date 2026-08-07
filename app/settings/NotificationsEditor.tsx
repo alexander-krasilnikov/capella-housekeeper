@@ -5,12 +5,11 @@ import { saveNotificationsAction, testSlackConnectionAction } from "../actions";
 import type { SlackConnectionTestResult } from "@/lib/slack";
 import type { NotifiableAgeStatus, NotificationsByTier } from "@/types";
 
-/** "New" is deliberately excluded - too young to ever be a housekeeping candidate, so there's nothing to configure for it. */
-const TIERS: NotifiableAgeStatus[] = ["Established", "Stale", "Forgotten"];
+/** "In Use" is deliberately excluded - there's nothing to ask about a cluster with evidence of active use. */
+const TIERS: NotifiableAgeStatus[] = ["Stale", "Forgotten"];
 
 const TIER_DESCRIPTIONS: Record<NotifiableAgeStatus, string> = {
-  Established: "Looks actively used (recently created or recently active). Notifying here risks false positives.",
-  Stale: "No recent activity, past the Stale threshold. A reasonable point to start asking.",
+  Stale: "No recent activity, past the activity grace period. A reasonable point to start asking.",
   Forgotten: "Long idle, past the Forgotten threshold. The strongest cleanup candidate.",
 };
 

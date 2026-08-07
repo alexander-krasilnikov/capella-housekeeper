@@ -86,13 +86,6 @@ The system SHALL allow the table to be sorted, ascending or descending, by any d
 - **WHEN** a user sorts the table by age descending
 - **THEN** the oldest clusters are listed first
 
-### Requirement: Deleted clusters remain visible during retention
-The system SHALL display tombstoned (deleted) clusters in the table, visibly marked as deleted, until their retention period elapses.
-
-#### Scenario: Recently deleted cluster still shown
-- **WHEN** a cluster was deleted from Capella less than the configured retention period ago
-- **THEN** it still appears in the table marked as deleted
-
 ### Requirement: Column visibility and ordering
 The system SHALL let a user show or hide individual columns and change their left-to-right order.
 

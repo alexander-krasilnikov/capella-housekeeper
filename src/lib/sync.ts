@@ -14,8 +14,9 @@ import {
 import {
   readClusters,
   upsertClusters,
+  removeClusters,
   appendHistory,
-  purgeExpiredTombstones,
+  purgeExpiredHistory,
 } from "./store";
 import { readSettings } from "./settings";
 import { applyConsentNotifications } from "./notifications";
@@ -167,8 +168,9 @@ function adoptConsentFields(record: ClusterRecord, source: ClusterRecord): void 
 export interface SyncResult {
   syncedClusters: number;
   orgsSynced: number;
-  purgedClusterIds: string[];
-  /** Orgs skipped (in full or in part) this cycle due to an API failure - their existing records are left untouched rather than tombstoned. */
+  /** Clusters no longer returned by Capella this cycle - each got a final history snapshot and was removed from the live store outright, not tombstoned in place. */
+  removedClusterIds: string[];
+  /** Orgs skipped (in full or in part) this cycle due to an API failure - their existing records are left untouched. */
   failedOrgIds: string[];
 }
 
@@ -317,13 +319,17 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
     }
   }
 
-  // A cluster that was active but no longer appears for a project we just
-  // fully synced is treated as deleted - tombstoned, not removed outright.
+  // A cluster no longer returned for a project we just fully synced is
+  // gone - collected here by ID only; its final history snapshot (below)
+  // and removal from the live store happen once the freshest available
+  // copy of each is known. Deliberately not gated on `existing.deletedAt`:
+  // a record already tombstoned from before this change is swept up the
+  // same way, one time, instead of staying stuck in the live store forever.
+  const removedClusterIds: string[] = [];
   for (const existing of existingClusters) {
-    if (existing.deletedAt) continue;
     if (!seenOrgIds.has(existing.orgId)) continue;
     if (seenClusterIds.has(existing.clusterId)) continue;
-    records.push({ ...existing, deletedAt: now, lastSyncedAt: now });
+    removedClusterIds.push(existing.clusterId);
   }
 
   await applyConsentNotifications(records, settings, nowMs);
@@ -348,14 +354,28 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
     if (fresh) adoptConsentFields(record, fresh);
   }
 
+  // One final history snapshot per removed cluster, built from the
+  // freshest available copy - the same clobber-avoidance reason the
+  // reconciliation above re-reads before adopting: a Slack click or manual
+  // action could have changed the record after this cycle's initial read.
+  // Reuses an already-set `deletedAt` (a pre-existing tombstone being swept
+  // up) rather than overwriting it with this cycle's time.
+  for (const clusterId of removedClusterIds) {
+    const fresh = freshExisting.get(clusterId) ?? existingById.get(clusterId);
+    if (!fresh) continue;
+    const deletedAt = fresh.deletedAt ?? now;
+    snapshots.push({ clusterId, takenAt: now, record: { ...fresh, deletedAt, lastSyncedAt: now } });
+  }
+
   await upsertClusters(records);
+  await removeClusters(removedClusterIds);
   await appendHistory(snapshots);
-  const { purgedClusterIds } = await purgeExpiredTombstones(new Date(now), settings.retentionDays);
+  await purgeExpiredHistory(new Date(now), settings.retentionDays);
 
   return {
     syncedClusters: records.length,
     orgsSynced: orgs.length - failedOrgIds.length,
-    purgedClusterIds,
+    removedClusterIds,
     failedOrgIds,
   };
 }

@@ -3,21 +3,6 @@
 ## Purpose
 Detects age-status tier transitions worth acting on, asks the cluster's derived owner for consent to turn off or delete it via a Slack direct message, and tracks that consent - including a snooze option - through its pending, reminder, expiry, and decision lifecycle.
 ## Requirements
-### Requirement: Per-tier notification configuration, excluding "New"
-The system SHALL allow each age-status tier except "New" (that is: Established, Stale, and Forgotten) to be independently configured with a notify toggle, an ask-to-turn-off toggle, and an ask-to-delete toggle. The system SHALL NOT offer any notification configuration for "New", and SHALL NOT send a notification for a cluster while it is classified "New" regardless of any other setting.
-
-#### Scenario: Tier configured to notify with both asks
-- **WHEN** an operator enables notify, ask-to-turn-off, and ask-to-delete for the "Forgotten" tier
-- **THEN** a cluster transitioning into "Forgotten" triggers a notification offering both turn-off and delete consent options
-
-#### Scenario: Tier configured to notify without any ask
-- **WHEN** an operator enables notify but leaves ask-to-turn-off and ask-to-delete disabled for a tier
-- **THEN** a cluster transitioning into that tier triggers a notification with no turn-off or delete option (a snooze option is still offered - see below)
-
-#### Scenario: New is never notification-eligible
-- **WHEN** a cluster's age status is "New"
-- **THEN** no notification is sent for it, and no per-tier configuration exists for "New" in settings
-
 ### Requirement: Notification fires on tier transition, not on every sync
 The system SHALL send a notification only when a cluster's computed age status changes to a tier configured to notify, compared to the tier last observed for that cluster - not on every sync cycle a cluster spends within that tier.
 
@@ -114,7 +99,7 @@ The system SHALL track each pending consent request's age, SHALL resend the noti
 Every consent notification SHALL state what happens if the owner does not respond: the configured maximum number of reminders, the configured expiry period, and that no action is taken automatically once the request expires. For a cluster in the "Forgotten" tier, the notification SHALL additionally state that the cluster has already exceeded the configured Forgotten grace period.
 
 #### Scenario: Standard no-response notice
-- **WHEN** a consent notification is sent for a cluster in the "Established" or "Stale" tier
+- **WHEN** a consent notification is sent for a cluster in the "Stale" tier
 - **THEN** the notification states the reminder count, the expiry period, and that expiry results in no automatic action
 
 #### Scenario: Forgotten-tier no-response notice
@@ -131,4 +116,19 @@ The system SHALL leave a cluster's consent outcome (approved-turnoff, approved-d
 #### Scenario: Recovery resets the cycle
 - **WHEN** a cluster with an approved or expired consent outcome transitions to a different age-status tier
 - **THEN** its consent state resets and a new notification may be sent according to that tier's configuration
+
+### Requirement: Per-tier notification configuration, excluding "In Use"
+The system SHALL allow each age-status tier except "In Use" (that is: Stale and Forgotten) to be independently configured with a notify toggle, an ask-to-turn-off toggle, and an ask-to-delete toggle. The system SHALL NOT offer any notification configuration for "In Use", and SHALL NOT send a notification for a cluster while it is classified "In Use" regardless of any other setting.
+
+#### Scenario: Tier configured to notify with both asks
+- **WHEN** an operator enables notify, ask-to-turn-off, and ask-to-delete for the "Forgotten" tier
+- **THEN** a cluster transitioning into "Forgotten" triggers a notification offering both turn-off and delete consent options
+
+#### Scenario: Tier configured to notify without any ask
+- **WHEN** an operator enables notify but leaves ask-to-turn-off and ask-to-delete disabled for a tier
+- **THEN** a cluster transitioning into that tier triggers a notification with no turn-off or delete option (a snooze option is still offered - see below)
+
+#### Scenario: In Use is never notification-eligible
+- **WHEN** a cluster's age status is "In Use"
+- **THEN** no notification is sent for it, and no per-tier configuration exists for "In Use" in settings
 

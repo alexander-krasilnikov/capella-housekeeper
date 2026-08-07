@@ -3,7 +3,7 @@ import { readClusters } from "@/lib/store";
 import { readSettings } from "@/lib/settings";
 import { formatConfigSummary, formatStatusLabel } from "@/lib/configSummary";
 import { isAlreadyOff } from "@/lib/slack";
-import { ageDaysBetween, formatAge } from "@/lib/format";
+import { ageDaysBetween, ageHoursBetween, formatAge } from "@/lib/format";
 import { computeAgeStatus } from "@/lib/ageStatus";
 import ClusterTable, { type ClusterRow } from "./components/ClusterTable";
 import RefreshButton from "./components/RefreshButton";
@@ -64,13 +64,12 @@ export default async function DashboardPage() {
       snoozeUntilMs: c.snoozeUntil ? new Date(c.snoozeUntil).getTime() : null,
       snoozeJustification: c.snoozeJustification,
       ageStatus: computeAgeStatus(
-        ageDaysBetween(createdAtMs, now),
+        ageHoursBetween(createdAtMs, now),
         lastActivityMs,
         c.lastActivitySource,
         now,
         settings,
       ),
-      deleted: c.deletedAt !== null,
       lastSyncedAtMs: new Date(c.lastSyncedAt).getTime(),
     };
   });

@@ -102,7 +102,7 @@ export default async function SettingsPage({
         <div>
           <SectionHeader
             title="Age-status thresholds"
-            description="Controls when a cluster is classified New, Established, Stale, or Forgotten."
+            description="Controls when a cluster is classified In Use, Stale, or Forgotten."
           />
           {sharedBanner}
           <form
@@ -111,28 +111,16 @@ export default async function SettingsPage({
           >
             <input type="hidden" name="section" value="thresholds" />
             <NumberField
-              name="newDays"
-              label="New until (days)"
-              hint="Younger than this is 'New'."
-              defaultValue={settings.newDays}
+              name="activityGraceHours"
+              label="Activity grace period (hours)"
+              hint="A cluster with real activity within this many hours - or created this recently, if it has no activity yet - is 'In Use'. Must be less than 'Forgotten after'."
+              defaultValue={settings.activityGraceHours}
             />
             <NumberField
-              name="staleDays"
-              label="Stale after (days)"
-              hint="Older than this (and not recently active) becomes 'Stale'."
-              defaultValue={settings.staleDays}
-            />
-            <NumberField
-              name="forgottenDays"
-              label="Forgotten after (days)"
-              hint="Older than this (and not recently active) becomes 'Forgotten'."
-              defaultValue={settings.forgottenDays}
-            />
-            <NumberField
-              name="inactivityGraceDays"
-              label="Activity grace period (days)"
-              hint="A cluster with known activity within this many days stays 'Established' regardless of age."
-              defaultValue={settings.inactivityGraceDays}
+              name="forgottenHours"
+              label="Forgotten after (hours)"
+              hint="Older than this with no evidence of use becomes 'Forgotten'; otherwise it's 'Stale'."
+              defaultValue={settings.forgottenHours}
             />
             <button
               type="submit"
