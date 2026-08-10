@@ -1,7 +1,7 @@
 import { WebClient } from "@slack/web-api";
 import { ageDaysBetween, ageHoursBetween } from "./format";
 import { formatStatusLabel } from "./configSummary";
-import type { ClusterRecord, NotifiableAgeStatus, Settings, TierNotificationConfig } from "../types";
+import type { AgeStatus, ClusterRecord, Settings, TierNotificationConfig } from "../types";
 
 export type ConsentAction = "turnoff" | "delete" | "snooze";
 
@@ -57,11 +57,13 @@ function confirmDialog(action: ConsentAction, clusterName: string) {
 
 /** Plain-language explanation of what the tier means and why this cluster is in it, parameterized by the operator's actual configured thresholds rather than a hardcoded description. Stated in hours, matching the settings fields exactly, rather than converted to a rounded day figure that could read as a different number than what's actually configured. */
 function describeTier(
-  tier: NotifiableAgeStatus,
+  tier: AgeStatus,
   ageHours: number,
   settings: Pick<Settings, "activityGraceHours" | "forgottenHours">,
 ): string {
   switch (tier) {
+    case "In Use":
+      return `It's currently classified *In Use* (activity within the last ${settings.activityGraceHours} hour(s), or created that recently) - this request was sent manually rather than triggered automatically.`;
     case "Stale":
       return `It's classified *Stale*: it's ${ageHours} hour(s) old with no activity in the last ${settings.activityGraceHours} hour(s), or no activity data at all. It may not be needed anymore.`;
     case "Forgotten":
@@ -126,7 +128,7 @@ function describeLastActivity(cluster: ClusterRecord, nowMs: number): string {
  * renewed activity.
  */
 function describeNoResponseConsequence(
-  tier: NotifiableAgeStatus,
+  tier: AgeStatus,
   settings: Pick<Settings, "forgottenHours" | "consentReminderMax" | "consentExpiryDays">,
 ): string {
   const base = `If you don't respond, you'll get up to ${settings.consentReminderMax} reminder(s) over the next ${settings.consentExpiryDays} day(s). After that, this request simply expires - *no action is taken automatically*, the cluster is left exactly as it is, and you won't be asked again until its status changes.`;
@@ -136,7 +138,7 @@ function describeNoResponseConsequence(
 
 export interface ConsentMessageInput {
   cluster: ClusterRecord;
-  tier: NotifiableAgeStatus;
+  tier: AgeStatus;
   tierConfig: TierNotificationConfig;
   isReminder: boolean;
   nowMs: number;
@@ -201,7 +203,6 @@ export function buildConsentMessage({ cluster, tier, tierConfig, isReminder, now
 }
 
 export const SNOOZE_MODAL_CALLBACK_ID = "consent_snooze_modal";
-const SNOOZE_DAY_OPTIONS = [1, 2, 3];
 
 export interface SnoozeModalMetadata {
   clusterId: string;
@@ -209,8 +210,8 @@ export interface SnoozeModalMetadata {
   messageTs: string;
 }
 
-/** Opened when "Snooze" is clicked - gathers the two things a button click alone can't: how long, and why (required, so there's always a reason recorded for whoever reviews it later). */
-export function buildSnoozeModalView(clusterName: string, metadata: SnoozeModalMetadata) {
+/** Opened when "Snooze" is clicked - gathers the two things a button click alone can't: how long, and why (required, so there's always a reason recorded for whoever reviews it later). `dayOptions` comes from Settings.snoozeDayOptions (configurable in the settings page) rather than being fixed here. */
+export function buildSnoozeModalView(clusterName: string, metadata: SnoozeModalMetadata, dayOptions: number[]) {
   return {
     type: "modal" as const,
     callback_id: SNOOZE_MODAL_CALLBACK_ID,
@@ -231,7 +232,7 @@ export function buildSnoozeModalView(clusterName: string, metadata: SnoozeModalM
           type: "static_select",
           action_id: "days",
           placeholder: { type: "plain_text", text: "Choose a duration" },
-          options: SNOOZE_DAY_OPTIONS.map((days) => ({
+          options: dayOptions.map((days) => ({
             text: { type: "plain_text", text: `${days} day${days > 1 ? "s" : ""}` },
             value: String(days),
           })),

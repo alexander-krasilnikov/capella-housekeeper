@@ -8,6 +8,7 @@ import { computeAgeStatus } from "@/lib/ageStatus";
 import ClusterTable, { type ClusterRow } from "./components/ClusterTable";
 import RefreshButton from "./components/RefreshButton";
 import SlackConnectionIndicator from "./components/SlackConnectionIndicator";
+import ThemeToggle from "./components/ThemeToggle";
 import { getSlackBotStatus } from "@/lib/slackBot";
 import { logoutAction } from "./actions";
 
@@ -76,18 +77,21 @@ export default async function DashboardPage() {
 
   return (
     <main className="mx-auto w-full px-6 py-8 sm:w-[90%]">
-      <header className="mb-6 flex items-center justify-between">
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Capella Housekeeper</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <h1 className="text-xl font-semibold tracking-tight text-ink">
+            Capella <span className="text-brand">Housekeeper</span>
+          </h1>
+          <p className="text-sm text-ink-muted">
             {rows.length} cluster{rows.length === 1 ? "" : "s"} across all configured organizations
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <SlackConnectionIndicator initialStatus={getSlackBotStatus()} />
+          <ThemeToggle />
           <Link
             href="/settings"
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-panel-hover"
           >
             Settings
           </Link>
@@ -95,7 +99,7 @@ export default async function DashboardPage() {
           <form action={logoutAction}>
             <button
               type="submit"
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-panel-hover"
             >
               Log out
             </button>

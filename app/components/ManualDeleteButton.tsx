@@ -47,10 +47,10 @@ export default function ManualDeleteButton({ clusterId, clusterName }: { cluster
             aria-modal="true"
             aria-label={`Delete ${clusterName}`}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-900"
+            className="w-full max-w-sm rounded-xl border border-line bg-panel p-4 shadow-xl"
           >
-            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Delete this cluster?</p>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-sm font-semibold text-ink">Delete this cluster?</p>
+            <p className="mt-1 text-xs text-ink-muted">
               This can&rsquo;t be undone. Type <span className="font-mono font-semibold">{clusterName}</span> to
               confirm.
             </p>
@@ -61,14 +61,14 @@ export default function ManualDeleteButton({ clusterId, clusterName }: { cluster
               onChange={(e) => setTypedName(e.target.value)}
               placeholder={clusterName}
               aria-label="Cluster name confirmation"
-              className="mt-3 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/30 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              className="mt-3 w-full rounded-md border border-line bg-panel px-2 py-1.5 text-sm text-ink outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/30"
             />
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 disabled={pending}
                 onClick={() => setOpen(false)}
-                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-panel-hover disabled:opacity-50"
               >
                 Cancel
               </button>

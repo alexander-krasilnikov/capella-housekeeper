@@ -21,7 +21,7 @@ export default function ManualTurnOffButton({ clusterId, clusterName }: { cluste
   if (confirming) {
     return (
       <span className="inline-flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-slate-600 dark:text-slate-300">Turn off {clusterName}?</span>
+        <span className="text-ink-muted">Turn off {clusterName}?</span>
         <button
           type="button"
           disabled={pending}
@@ -38,7 +38,7 @@ export default function ManualTurnOffButton({ clusterId, clusterName }: { cluste
           type="button"
           disabled={pending}
           onClick={() => setConfirming(false)}
-          className="rounded-md border border-slate-300 px-2 py-0.5 text-slate-500 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          className="rounded-md border border-line px-2 py-0.5 text-ink-muted transition hover:bg-panel-hover disabled:opacity-50"
         >
           Cancel
         </button>

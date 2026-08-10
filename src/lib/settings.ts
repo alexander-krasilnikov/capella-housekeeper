@@ -89,6 +89,12 @@ function isNotificationsByTier(v: unknown): v is NotificationsByTier {
   return NOTIFIABLE_TIERS.every((tier) => isTierNotificationConfig(obj[tier]));
 }
 
+/** Non-empty, strictly ascending (so also implicitly distinct) positive integers. */
+function isSnoozeDayOptionsList(v: unknown): v is number[] {
+  if (!Array.isArray(v) || v.length === 0) return false;
+  return v.every((n, i) => isPositiveInteger(n) && (i === 0 || (v[i - 1] as number) < n));
+}
+
 /** Positive integers, strictly increasing so each age-status tier's window is non-empty. */
 export function validateSettings(input: unknown): Settings | null {
   if (typeof input !== "object" || input === null) return null;
@@ -107,6 +113,7 @@ export function validateSettings(input: unknown): Settings | null {
     notificationsByTier,
     consentReminderMax,
     consentExpiryDays,
+    snoozeDayOptions,
   } = input as Record<string, unknown>;
 
   if (!isPositiveInteger(activityGraceHours) || !isPositiveInteger(forgottenHours)) {
@@ -132,6 +139,7 @@ export function validateSettings(input: unknown): Settings | null {
   if (!isNotificationsByTier(notificationsByTier)) return null;
   if (!isPositiveInteger(consentReminderMax)) return null;
   if (!isPositiveInteger(consentExpiryDays)) return null;
+  if (!isSnoozeDayOptionsList(snoozeDayOptions)) return null;
 
   return {
     activityGraceHours,
@@ -148,6 +156,7 @@ export function validateSettings(input: unknown): Settings | null {
     notificationsByTier,
     consentReminderMax,
     consentExpiryDays,
+    snoozeDayOptions,
   };
 }
 
@@ -230,7 +239,8 @@ export async function writeSettings(
       ok: false,
       error:
         "One or more values are invalid. Check that numeric fields are positive whole numbers " +
-        "(with New < Stale < Forgotten), the API base URL is a valid http(s) URL, and required text fields aren't empty.",
+        "(with New < Stale < Forgotten), the API base URL is a valid http(s) URL, required text fields aren't " +
+        "empty, and the snooze day options are a comma-separated list of distinct positive whole numbers.",
     };
   }
   await writeJsonFileAtomic(settingsPath(), validated);

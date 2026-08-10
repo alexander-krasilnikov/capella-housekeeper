@@ -33,7 +33,7 @@ The system SHALL require `activityGraceHours` and `forgottenHours` to be positiv
 - **THEN** the update is rejected and the previously saved thresholds remain in effect
 
 ### Requirement: Capella organizations configurable in settings
-The system SHALL let an operator view, add, and remove Capella organizations (each with an organization ID, an optional display name, and an API key) from the settings page, and SHALL persist the resulting list for use by cluster sync.
+The system SHALL let an operator view, add, and remove Capella organizations (each with an organization ID and an API key) from the settings page, and SHALL persist the resulting list for use by cluster sync.
 
 #### Scenario: Adding an organization
 - **WHEN** an operator adds an organization with an organization ID and API key and saves
@@ -47,12 +47,27 @@ The system SHALL let an operator view, add, and remove Capella organizations (ea
 - **WHEN** the settings page displays a configured organization
 - **THEN** its API key is masked, with an explicit action required to reveal it
 
-### Requirement: Capella API base URL configurable in settings
-The system SHALL let an operator view and edit the Capella Management API base URL from the settings page, defaulting to the standard Capella API host when unset.
+### Requirement: Organization name is shown read-only, resolved from the Capella API
+The system SHALL display each configured organization's name as a read-only value resolved from the Capella API, rather than an operator-editable field. The system SHALL look up this name whenever a row's organization ID and API key are both present, independent of whether the row has been saved yet.
 
-#### Scenario: Overriding the API base URL
-- **WHEN** an operator sets a different API base URL and saves
-- **THEN** cluster sync uses that URL for subsequent requests
+#### Scenario: Name resolves once ID and API key are entered
+- **WHEN** an operator enters an organization ID and API key for a new or existing row
+- **THEN** the settings page displays that organization's real name once the lookup succeeds, without the operator typing it
+
+#### Scenario: No editable name field is offered
+- **WHEN** the settings page displays the organizations list
+- **THEN** no control lets the operator directly type or override an organization's name
+
+#### Scenario: Lookup fails
+- **WHEN** the organization ID and API key don't resolve to a valid organization
+- **THEN** the name is shown as unresolved rather than blocking the rest of the form
+
+### Requirement: Capella API base URL is fixed, not exposed in settings
+The system SHALL use a fixed Capella Management API base URL, defaulting to the standard Capella API host, and SHALL NOT provide a settings-page control to view or edit it.
+
+#### Scenario: No API base URL control on the settings page
+- **WHEN** an operator views the settings page
+- **THEN** no control for the Capella API base URL is shown
 
 ### Requirement: Sync interval configurable in settings
 The system SHALL let an operator view and edit the cluster-sync polling interval, in whole hours, from the settings page, defaulting to 1 hour.

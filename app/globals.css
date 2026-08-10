@@ -1,9 +1,66 @@
 @import "tailwindcss";
 
-html {
+/*
+ * Explicit theme choice overrides OS preference: `dark:` now matches
+ * [data-theme="dark"] on <html> (set server-side from the theme cookie, or
+ * resolved client-side for "system" - see app/layout.tsx) rather than the
+ * `prefers-color-scheme` media query Tailwind uses by default. Every
+ * existing `dark:`-prefixed class in the app keeps working unchanged - only
+ * what `dark:` compiles to changes.
+ */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/*
+ * Capella-inspired design tokens: warm neutral surfaces + an orange-red
+ * brand accent, layered alongside (not replacing) the existing
+ * emerald/amber/rose semantic colors used throughout for status meaning.
+ * Directionally-inspired, not a verified brand source - see design.md in
+ * openspec/changes/capella-branded-theme. Dark-mode values below override
+ * these same custom properties by cascade, so every `bg-canvas`/`text-ink`/
+ * `bg-brand`/etc. utility they generate stays theme-aware for free.
+ */
+@theme {
+  --color-canvas: #f7f6f3;
+  --color-panel: #ffffff;
+  --color-panel-hover: #f1efec;
+  --color-line: #e3e0da;
+  --color-ink: #1c2333;
+  --color-ink-muted: #5b6478;
+  --color-ink-faint: #94a0b4;
+  --color-brand: #e8551f;
+  --color-brand-hover: #d1461d;
+  --color-brand-active: #b93b10;
+  --color-brand-soft: #fde6da;
+  --color-brand-ink: #ffffff;
+}
+
+[data-theme="dark"] {
+  --color-canvas: #12141c;
+  --color-panel: #191c26;
+  --color-panel-hover: #212433;
+  --color-line: #2b2f3f;
+  --color-ink: #eef0f5;
+  --color-ink-muted: #9aa3b8;
+  --color-ink-faint: #616a80;
+  --color-brand: #ff7a45;
+  --color-brand-hover: #ff8f61;
+  --color-brand-active: #ffa676;
+  --color-brand-soft: #33231a;
+  --color-brand-ink: #1c0f08;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+html:not([data-theme]) {
   color-scheme: light dark;
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }

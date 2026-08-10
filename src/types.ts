@@ -136,6 +136,8 @@ export interface Settings {
   consentReminderMax: number;
   /** Days a pending consent request may go unanswered before it expires. */
   consentExpiryDays: number;
+  /** Selectable snooze durations (in days) offered in the Slack "Snooze" modal - a non-empty list of distinct positive integers, ascending. */
+  snoozeDayOptions: number[];
 }
 
 const DEFAULT_TIER_NOTIFICATION_CONFIG: TierNotificationConfig = {
@@ -168,4 +170,5 @@ export const DEFAULT_SETTINGS: Omit<Settings, "sessionSecret"> = {
   notificationsByTier: DEFAULT_NOTIFICATIONS_BY_TIER,
   consentReminderMax: 2,
   consentExpiryDays: 7,
+  snoozeDayOptions: [1, 2, 3],
 };

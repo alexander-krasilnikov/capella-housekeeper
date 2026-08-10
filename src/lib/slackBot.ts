@@ -280,13 +280,18 @@ async function connectSocketMode(botToken: string, appToken: string): Promise<vo
       const clusters = await readClusters();
       const record = clusters.find((c) => c.clusterId === clusterId);
       if (!record || record.consentStatus !== "pending") return;
+      const { snoozeDayOptions } = await readSettings();
       await client.views.open({
         trigger_id: triggerId,
-        view: buildSnoozeModalView(record.clusterName, {
-          clusterId: record.clusterId,
-          channelId: record.slackChannelId ?? "",
-          messageTs: record.slackMessageTs ?? "",
-        }) as never,
+        view: buildSnoozeModalView(
+          record.clusterName,
+          {
+            clusterId: record.clusterId,
+            channelId: record.slackChannelId ?? "",
+            messageTs: record.slackMessageTs ?? "",
+          },
+          snoozeDayOptions,
+        ) as never,
       });
     } catch (err) {
       const reason = slackErrorReason(err);

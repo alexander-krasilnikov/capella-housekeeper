@@ -28,6 +28,24 @@ declare module "@tanstack/react-table" {
   }
 }
 
+/** Chevron for the row-expander button - rotates in place via CSS rather than swapping ▸/▾ glyphs, so opening/closing animates smoothly instead of jumping between two differently-shaped characters. */
+function ChevronIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M7 4l6 6-6 6" />
+    </svg>
+  );
+}
+
 export interface ClusterRow {
   clusterId: string;
   orgId: string;
@@ -138,7 +156,7 @@ function describeConsent(
   outcome: ConsentActionOutcome,
 ): { label: string; text: string; dot: string } {
   if (status === "none") {
-    return { label: "—", text: "text-slate-400 dark:text-slate-500", dot: "bg-slate-300 dark:bg-slate-600" };
+    return { label: "—", text: "text-ink-faint", dot: "bg-slate-300 dark:bg-slate-600" };
   }
   if (status === "pending") {
     return { label: "Pending", text: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500" };
@@ -164,7 +182,7 @@ function describeConsent(
     };
   }
   if (outcome === "skipped") {
-    return { label: `${actionLabel} skipped`, text: "text-slate-500 dark:text-slate-400", dot: "bg-slate-400" };
+    return { label: `${actionLabel} skipped`, text: "text-ink-muted", dot: "bg-slate-400" };
   }
   if (outcome === "failed") {
     return { label: `${actionLabel} failed`, text: "text-rose-600 dark:text-rose-400", dot: "bg-rose-500" };
@@ -228,7 +246,7 @@ const columns = [
     header: "Cluster",
     meta: { widthPct: 9 },
     cell: (info) => (
-      <span className="font-medium text-slate-900 dark:text-slate-100">{info.getValue()}</span>
+      <span className="font-medium text-ink">{info.getValue()}</span>
     ),
   }),
   columnHelper.accessor("createdAtMs", {
@@ -267,7 +285,7 @@ const columns = [
     cell: (info) => {
       const amount = info.getValue();
       if (amount === null) {
-        return <span className="text-slate-400 dark:text-slate-500">{actualCostDisplayLabel(info.row.original)}</span>;
+        return <span className="text-ink-faint">{actualCostDisplayLabel(info.row.original)}</span>;
       }
       return (
         <span>
@@ -294,7 +312,7 @@ const columns = [
     header: "Consent",
     meta: { widthPct: 9 },
     cell: (info) => (
-      <span className="inline-flex items-center gap-1.5">
+      <span className="flex flex-wrap items-center gap-1.5">
         <ConsentBadge status={info.getValue()} outcome={info.row.original.actionOutcome} />
         <SendConsentRequestButton clusterId={info.row.original.clusterId} />
       </span>
@@ -457,7 +475,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
 
   if (rows.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+      <p className="rounded-xl border border-dashed border-line p-10 text-center text-sm text-ink-muted">
         No clusters synced yet. The background sync will populate this table shortly after startup.
       </p>
     );
@@ -472,13 +490,13 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
           onChange={(e) => setGlobalFilter(e.target.value)}
           placeholder="Search clusters…"
           aria-label="Search clusters across all fields"
-          className="w-full max-w-sm rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          className="w-full max-w-sm rounded-lg border border-line bg-panel px-3 py-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
         />
 
         <div
           role="group"
           aria-label="Filter by age status"
-          className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white p-1 dark:border-slate-700 dark:bg-slate-900"
+          className="flex items-center gap-1 rounded-lg border border-line bg-panel p-1"
         >
           {(["All", ...AGE_STATUS_OPTIONS] as const).map((tier) => {
             const isActive = tier === "All" ? currentAgeStatusFilter === undefined : currentAgeStatusFilter === tier;
@@ -490,12 +508,10 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                 aria-pressed={isActive}
                 onClick={() => table.getColumn("ageStatus")?.setFilterValue(tier === "All" ? undefined : tier)}
                 className={`rounded-md px-2.5 py-1 text-xs font-semibold uppercase tracking-wide transition ${
-                  isActive
-                    ? "bg-blue-600 text-white"
-                    : "text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                  isActive ? "bg-brand text-brand-ink" : "text-ink-muted hover:bg-panel-hover"
                 }`}
               >
-                {tier} <span className={isActive ? "text-blue-100" : "text-slate-400 dark:text-slate-500"}>{count}</span>
+                {tier} <span className={isActive ? "text-brand-ink/70" : "text-ink-faint"}>{count}</span>
               </button>
             );
           })}
@@ -505,16 +521,16 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
           <button
             type="button"
             onClick={() => setColumnsPanelOpen((o) => !o)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="rounded-lg border border-line bg-panel px-3 py-2 text-sm text-ink transition hover:bg-panel-hover"
           >
             Columns
           </button>
           {columnsPanelOpen && (
-            <div className="absolute left-0 z-20 mt-2 w-72 rounded-lg border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+            <div className="absolute left-0 z-20 mt-2 w-72 rounded-lg border border-line bg-panel p-2 shadow-lg">
               {orderedColumnsForPanel.map((column, idx, arr) => (
                 <div
                   key={column.id}
-                  className="flex items-center justify-between gap-2 rounded px-2 py-1 text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                  className="flex items-center justify-between gap-2 rounded px-2 py-1 text-sm text-ink hover:bg-panel-hover"
                 >
                   <label className="flex min-w-0 flex-1 items-center gap-2">
                     <input
@@ -532,7 +548,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                       title="Move left"
                       disabled={idx === 0}
                       onClick={() => moveColumn(column.id, -1)}
-                      className="rounded px-1.5 py-0.5 text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+                      className="rounded px-1.5 py-0.5 text-ink-faint hover:bg-panel-hover disabled:opacity-30"
                     >
                       ←
                     </button>
@@ -541,7 +557,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                       title="Move right"
                       disabled={idx === arr.length - 1}
                       onClick={() => moveColumn(column.id, 1)}
-                      className="rounded px-1.5 py-0.5 text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+                      className="rounded px-1.5 py-0.5 text-ink-faint hover:bg-panel-hover disabled:opacity-30"
                     >
                       →
                     </button>
@@ -554,11 +570,11 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
       </div>
 
       {pageRows.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+        <p className="rounded-xl border border-dashed border-line p-10 text-center text-sm text-ink-muted">
           {globalFilter ? <>No clusters match &ldquo;{globalFilter}&rdquo;.</> : "No clusters match the current filters."}
         </p>
       ) : (
-        <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="rounded-xl border border-line bg-panel">
           <table className="w-full table-fixed border-collapse text-xs lg:text-sm">
             <colgroup>
               {table.getHeaderGroups()[0].headers.map((header) => (
@@ -567,18 +583,14 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
             </colgroup>
             <thead>
               {table.getHeaderGroups().map((headerGroup) => (
-                <tr key={headerGroup.id} className="bg-slate-50 dark:bg-slate-800/60">
+                <tr key={headerGroup.id} className="bg-panel-hover">
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
                       onClick={header.column.getCanSort() ? header.column.getToggleSortingHandler() : undefined}
-                      className={`border-b border-slate-200 px-1.5 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide transition lg:px-3 lg:py-2 lg:text-xs dark:border-slate-800 ${
+                      className={`border-b border-line px-1.5 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide transition lg:px-3 lg:py-2 lg:text-xs ${
                         header.column.getCanSort() ? "cursor-pointer select-none" : ""
-                      } ${
-                        header.column.getIsSorted()
-                          ? "text-blue-600 dark:text-blue-400"
-                          : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
-                      }`}
+                      } ${header.column.getIsSorted() ? "text-brand" : "text-ink-muted hover:text-ink"}`}
                     >
                       {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                       {header.column.getIsSorted() === "asc" && " ▲"}
@@ -591,7 +603,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
             <tbody>
               {pageRows.map((row) => (
                 <Fragment key={row.id}>
-                  <tr className="border-b border-slate-100 align-top transition last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
+                  <tr className="border-b border-line align-top transition last:border-0 hover:bg-panel-hover">
                     {row.getVisibleCells().map((cell) => {
                       if (cell.column.id === "expander") {
                         return (
@@ -600,9 +612,14 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                               type="button"
                               onClick={() => toggleDetail(row.original.clusterId)}
                               aria-label="Toggle cluster details"
-                              className="text-slate-400 transition hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400"
+                              aria-expanded={detailOpenIds.has(row.original.clusterId)}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-ink-faint transition hover:bg-panel-hover hover:text-brand"
                             >
-                              {detailOpenIds.has(row.original.clusterId) ? "▾" : "▸"}
+                              <ChevronIcon
+                                className={`h-4 w-4 transition-transform duration-200 ${
+                                  detailOpenIds.has(row.original.clusterId) ? "rotate-90" : ""
+                                }`}
+                              />
                             </button>
                           </td>
                         );
@@ -610,7 +627,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
 
                       if (cell.getIsPlaceholder()) {
                         return (
-                          <td key={cell.id} className="px-1.5 py-1.5 text-slate-300 lg:px-3 lg:py-2 dark:text-slate-700">
+                          <td key={cell.id} className="px-1.5 py-1.5 text-ink-faint lg:px-3 lg:py-2">
                             —
                           </td>
                         );
@@ -624,9 +641,9 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                     })}
                   </tr>
                   {detailOpenIds.has(row.original.clusterId) && (
-                    <tr className="bg-slate-50 dark:bg-slate-900/60">
+                    <tr className="bg-panel-hover">
                       <td colSpan={row.getVisibleCells().length} className="px-4 py-3">
-                        <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-3 sm:divide-x sm:divide-slate-200 dark:sm:divide-slate-800">
+                        <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-3 sm:divide-x sm:divide-line">
                           {DETAIL_GROUPS.map((group) => {
                             const hiddenFieldsForGroup = hiddenColumnIds
                               .filter((columnId) => (DETAIL_GROUP_BY_COLUMN_ID[columnId] ?? "Cluster") === group)
@@ -636,10 +653,10 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                                 const header = cell.column.columnDef.header;
                                 return (
                                   <div key={columnId}>
-                                    <dt className="text-slate-400 dark:text-slate-500">
+                                    <dt className="text-ink-faint">
                                       {typeof header === "string" ? header : columnId}
                                     </dt>
-                                    <dd className="break-words text-slate-600 dark:text-slate-300">
+                                    <dd className="break-words text-ink-muted">
                                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                     </dd>
                                   </div>
@@ -652,21 +669,21 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
 
                             return (
                               <div key={group} className="sm:first:pl-0 sm:[&:not(:first-child)]:pl-4">
-                                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
                                   {group}
                                 </p>
                                 <dl className="flex flex-col gap-2">
                                   {group === "Organisation" && (
                                     <>
                                       <div>
-                                        <dt className="text-slate-400 dark:text-slate-500">Org ID</dt>
-                                        <dd className="break-all text-slate-600 dark:text-slate-300">
+                                        <dt className="text-ink-faint">Org ID</dt>
+                                        <dd className="break-all text-ink-muted">
                                           {row.original.orgId}
                                         </dd>
                                       </div>
                                       <div>
-                                        <dt className="text-slate-400 dark:text-slate-500">Project ID</dt>
-                                        <dd className="break-all text-slate-600 dark:text-slate-300">
+                                        <dt className="text-ink-faint">Project ID</dt>
+                                        <dd className="break-all text-ink-muted">
                                           {row.original.projectId}
                                         </dd>
                                       </div>
@@ -675,31 +692,31 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                                   {group === "Cluster" && (
                                     <>
                                       <div>
-                                        <dt className="text-slate-400 dark:text-slate-500">Cluster ID</dt>
-                                        <dd className="break-all text-slate-600 dark:text-slate-300">
+                                        <dt className="text-ink-faint">Cluster ID</dt>
+                                        <dd className="break-all text-ink-muted">
                                           {row.original.clusterId}
                                         </dd>
                                       </div>
                                       <div>
-                                        <dt className="text-slate-400 dark:text-slate-500">Couchbase Version</dt>
-                                        <dd className="text-slate-600 dark:text-slate-300">
+                                        <dt className="text-ink-faint">Couchbase Version</dt>
+                                        <dd className="text-ink-muted">
                                           {row.original.couchbaseVersion}
                                         </dd>
                                       </div>
                                       <div>
-                                        <dt className="text-slate-400 dark:text-slate-500">Storage</dt>
-                                        <dd className="text-slate-600 dark:text-slate-300">
+                                        <dt className="text-ink-faint">Storage</dt>
+                                        <dd className="text-ink-muted">
                                           {row.original.storageSummary}
                                         </dd>
                                       </div>
                                       <div>
-                                        <dt className="text-slate-400 dark:text-slate-500">Last Synced</dt>
-                                        <dd className="text-slate-600 dark:text-slate-300">
+                                        <dt className="text-ink-faint">Last Synced</dt>
+                                        <dd className="text-ink-muted">
                                           {formatDateTime(row.original.lastSyncedAtMs)}
                                         </dd>
                                       </div>
                                       <div>
-                                        <dt className="text-slate-400 dark:text-slate-500">Actions</dt>
+                                        <dt className="text-ink-faint">Actions</dt>
                                         <dd className="flex flex-wrap items-center gap-2">
                                           {!row.original.statusIsOff && (
                                             <ManualTurnOffButton
@@ -717,8 +734,8 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                                   )}
                                   {group === "Workflow" && hasSnooze && (
                                     <div>
-                                      <dt className="text-slate-400 dark:text-slate-500">Snooze</dt>
-                                      <dd className="text-slate-600 dark:text-slate-300">
+                                      <dt className="text-ink-faint">Snooze</dt>
+                                      <dd className="text-ink-muted">
                                         {row.original.snoozeUntilMs !== null && (
                                           <div>
                                             Until <FormattedDateTime ms={row.original.snoozeUntilMs} />
@@ -732,7 +749,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                                       </dd>
                                     </div>
                                   )}
-                                  {isEmpty && <p className="text-slate-300 dark:text-slate-600">—</p>}
+                                  {isEmpty && <p className="text-ink-faint">—</p>}
                                   {hiddenFieldsForGroup}
                                 </dl>
                               </div>
@@ -747,7 +764,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
             </tbody>
           </table>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-3 py-2 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-3 py-2 text-sm text-ink-muted">
             <div>
               Showing {pagination.pageIndex * pagination.pageSize + 1}–
               {Math.min((pagination.pageIndex + 1) * pagination.pageSize, totalRowCount)} of {totalRowCount}
@@ -758,7 +775,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                 <select
                   value={pagination.pageSize}
                   onChange={(e) => table.setPageSize(Number(e.target.value))}
-                  className="rounded-md border border-slate-300 bg-white px-1.5 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+                  className="rounded-md border border-line bg-panel px-1.5 py-1 text-sm"
                 >
                   {PAGE_SIZE_OPTIONS.map((size) => (
                     <option key={size} value={size}>
@@ -771,7 +788,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                 type="button"
                 onClick={() => table.previousPage()}
                 disabled={!table.getCanPreviousPage()}
-                className="rounded-md border border-slate-300 px-2 py-1 disabled:opacity-40 dark:border-slate-700"
+                className="rounded-md border border-line px-2 py-1 disabled:opacity-40"
               >
                 ← Prev
               </button>
@@ -782,7 +799,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                 type="button"
                 onClick={() => table.nextPage()}
                 disabled={!table.getCanNextPage()}
-                className="rounded-md border border-slate-300 px-2 py-1 disabled:opacity-40 dark:border-slate-700"
+                className="rounded-md border border-line px-2 py-1 disabled:opacity-40"
               >
                 Next →
               </button>
@@ -802,7 +819,7 @@ function StatusBadge({ statusLabel }: { statusLabel: string }) {
     ? "text-amber-600 dark:text-amber-400"
     : isActive
       ? "text-emerald-600 dark:text-emerald-400"
-      : "text-slate-500 dark:text-slate-400";
+      : "text-ink-muted";
   const dotClass = isOff ? "bg-amber-500" : isActive ? "bg-emerald-500" : "bg-slate-400";
 
   return (

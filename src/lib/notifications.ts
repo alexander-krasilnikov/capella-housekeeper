@@ -3,13 +3,28 @@ import { computeAgeStatus } from "./ageStatus";
 import { buildConsentMessage, isAlreadyOff, sendConsentDM, updateMessage } from "./slack";
 import { readClusters, upsertClusters } from "./store";
 import { readSettings } from "./settings";
-import type { AgeStatus, ClusterRecord, NotifiableAgeStatus, Settings } from "../types";
+import type { AgeStatus, ClusterRecord, Settings, TierNotificationConfig } from "../types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function isEmailLike(value: string | null): value is string {
   return value !== null && EMAIL_RE.test(value);
+}
+
+/**
+ * "In Use" has no configured tier settings (see NotifiableAgeStatus) - there's
+ * nothing to ask about automatically. A manual ask can still target an
+ * "In Use" cluster (an operator overriding the algorithm's classification),
+ * so it needs *some* config to build a message from; defaulting to offering
+ * both turn-off and delete gives the operator full manual control rather
+ * than silently offering nothing. `notify` is irrelevant here - manual sends
+ * always bypass it.
+ */
+const IN_USE_MANUAL_TIER_CONFIG: TierNotificationConfig = { notify: false, askTurnOff: true, askDelete: true };
+
+function resolveTierConfig(tier: AgeStatus, settings: Settings): TierNotificationConfig {
+  return tier === "In Use" ? IN_USE_MANUAL_TIER_CONFIG : settings.notificationsByTier[tier];
 }
 
 /** Same computation `computeAgeStatus` needs, from a stored record instead of the render-time inputs `app/page.tsx` already has to hand. */
@@ -36,7 +51,7 @@ export async function supersedeLiveMessage(record: ClusterRecord, settings: Sett
 /** Sends (or re-sends, as a reminder) a tier notification. Returns false without throwing on any skip/failure - owner unresolvable, tokens unset, or the Slack send itself failing are all "didn't send," not errors. */
 async function trySendNotification(
   record: ClusterRecord,
-  tier: NotifiableAgeStatus,
+  tier: AgeStatus,
   settings: Settings,
   isReminder: boolean,
   nowMs: number,
@@ -44,7 +59,7 @@ async function trySendNotification(
   if (!settings.slackBotToken || !settings.slackAppToken) return false;
   if (!isEmailLike(record.ownerDerived)) return false;
 
-  const tierConfig = settings.notificationsByTier[tier];
+  const tierConfig = resolveTierConfig(tier, settings);
   const message = buildConsentMessage({ cluster: record, tier, tierConfig, isReminder, nowMs, settings });
 
   const sent = await sendConsentDM(settings.slackBotToken, record.ownerDerived, message);
@@ -123,10 +138,10 @@ export async function applyConsentNotifications(
     }
 
     if (record.consentStatus !== "pending" || !record.consentCycleStartedAt) continue;
-    // "pending" is never set for "In Use" (see the transition/snooze-reset
-    // branches above) - this is just proving that invariant to TypeScript
-    // so trySendNotification below can take the narrower NotifiableAgeStatus.
-    if (tier === "In Use") continue;
+    // "pending" is never set for "In Use" by the automatic path above, but a
+    // manual send (sendManualConsentRequest) can set it regardless of tier -
+    // that cycle still needs to advance through reminders and expiry like
+    // any other, so there's deliberately no early-out for "In Use" here.
 
     const ageMs = nowMs - new Date(record.consentCycleStartedAt).getTime();
     const expiryMs = settings.consentExpiryDays * DAY_MS;
@@ -155,12 +170,15 @@ export interface ManualConsentResult {
 
 /**
  * Manually (re-)sends a real consent request for a cluster's *current*
- * tier, using that tier's configured asks (askTurnOff/askDelete) - bypasses
- * the tier's `notify` toggle (clicking this button is itself the trigger)
- * but otherwise behaves like an automatic send: supersedes any still-live
- * message first, and on success resets the consent cycle to a fresh
- * "pending" with real ask buttons, exactly as a transition-triggered send
- * would.
+ * tier, using that tier's configured asks (askTurnOff/askDelete, or the
+ * "In Use" manual default from resolveTierConfig if the cluster doesn't
+ * currently have a notifiable tier) - bypasses the tier's `notify` toggle
+ * (clicking this button is itself the trigger) but otherwise behaves like
+ * an automatic send: supersedes any still-live message first, and on
+ * success resets the consent cycle to a fresh "pending" with real ask
+ * buttons, exactly as a transition-triggered send would. Always available
+ * regardless of tier - an operator may want to check in with an owner even
+ * when the algorithm currently classifies the cluster "In Use".
  */
 export async function sendManualConsentRequest(clusterId: string): Promise<ManualConsentResult> {
   const [clusters, settings] = await Promise.all([readClusters(), readSettings()]);
@@ -175,10 +193,7 @@ export async function sendManualConsentRequest(clusterId: string): Promise<Manua
 
   const nowMs = Date.now();
   const tier = computeRecordAgeStatus(record, settings, nowMs);
-  if (tier === "In Use") {
-    return { ok: false, message: "Clusters currently classified 'In Use' aren't eligible for consent requests." };
-  }
-  const tierConfig = settings.notificationsByTier[tier];
+  const tierConfig = resolveTierConfig(tier, settings);
 
   await supersedeLiveMessage(record, settings, `Superseded by a manually-sent request for *${record.clusterName}*.`);
 

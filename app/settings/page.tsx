@@ -17,7 +17,7 @@ function NumberField({
   defaultValue: number;
 }) {
   return (
-    <label className="flex flex-col gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+    <label className="flex flex-col gap-1.5 text-sm font-medium text-ink-muted">
       {label}
       <input
         name={name}
@@ -26,9 +26,9 @@ function NumberField({
         step={1}
         required
         defaultValue={defaultValue}
-        className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+        className="rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
       />
-      <span className="text-xs font-normal text-slate-400 dark:text-slate-500">{hint}</span>
+      <span className="text-xs font-normal text-ink-faint">{hint}</span>
     </label>
   );
 }
@@ -54,8 +54,8 @@ function Banner({ error, success }: { error?: string; success?: string }) {
 function SectionHeader({ title, description }: { title: string; description?: string }) {
   return (
     <div className="mb-3">
-      <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
-      {description && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p>}
+      <h2 className="text-base font-semibold text-ink">{title}</h2>
+      {description && <p className="mt-1 text-sm text-ink-muted">{description}</p>}
     </div>
   );
 }
@@ -69,7 +69,7 @@ function resolveInitialSection(params: {
   credSaved?: string;
   secretError?: string;
 }): string {
-  const SHARED_SECTION_IDS = ["thresholds", "sync", "apiUrl", "notifications"];
+  const SHARED_SECTION_IDS = ["thresholds", "sync", "notifications"];
   if (params.section && SHARED_SECTION_IDS.includes(params.section)) return params.section;
   if (params.orgsError || params.orgsSaved) return "orgs";
   if (params.credError || params.credSaved) return "credentials";
@@ -107,7 +107,7 @@ export default async function SettingsPage({
           {sharedBanner}
           <form
             action={saveSettingsAction}
-            className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900"
+            className="flex flex-col gap-4 rounded-2xl border border-line bg-panel p-6"
           >
             <input type="hidden" name="section" value="thresholds" />
             <NumberField
@@ -124,7 +124,7 @@ export default async function SettingsPage({
             />
             <button
               type="submit"
-              className="mt-2 w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500 active:bg-blue-700"
+              className="mt-2 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-brand-ink transition hover:bg-brand-hover active:bg-brand-active"
             >
               Save
             </button>
@@ -144,7 +144,7 @@ export default async function SettingsPage({
           {sharedBanner}
           <form
             action={saveSettingsAction}
-            className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900"
+            className="flex flex-col gap-4 rounded-2xl border border-line bg-panel p-6"
           >
             <input type="hidden" name="section" value="sync" />
             <NumberField
@@ -161,42 +161,7 @@ export default async function SettingsPage({
             />
             <button
               type="submit"
-              className="mt-2 w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500 active:bg-blue-700"
-            >
-              Save
-            </button>
-          </form>
-        </div>
-      ),
-    },
-    {
-      id: "apiUrl",
-      label: "Capella API base URL",
-      content: (
-        <div>
-          <SectionHeader title="Capella API base URL" />
-          {sharedBanner}
-          <form
-            action={saveSettingsAction}
-            className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900"
-          >
-            <input type="hidden" name="section" value="apiUrl" />
-            <label className="flex flex-col gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
-              API base URL
-              <input
-                name="capellaApiBaseUrl"
-                type="url"
-                required
-                defaultValue={settings.capellaApiBaseUrl}
-                className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-              <span className="text-xs font-normal text-slate-400 dark:text-slate-500">
-                Only change this if Couchbase moves the Capella Management API host.
-              </span>
-            </label>
-            <button
-              type="submit"
-              className="mt-2 w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500 active:bg-blue-700"
+              className="mt-2 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-brand-ink transition hover:bg-brand-hover active:bg-brand-active"
             >
               Save
             </button>
@@ -220,6 +185,7 @@ export default async function SettingsPage({
             notificationsByTier={settings.notificationsByTier}
             consentReminderMax={settings.consentReminderMax}
             consentExpiryDays={settings.consentExpiryDays}
+            snoozeDayOptions={settings.snoozeDayOptions}
           />
         </div>
       ),
@@ -247,41 +213,41 @@ export default async function SettingsPage({
           <Banner error={params.credError} success={params.credSaved ? "Credentials updated." : undefined} />
           <form
             action={saveCredentialsAction}
-            className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900"
+            className="flex flex-col gap-4 rounded-2xl border border-line bg-panel p-6"
           >
-            <label className="flex flex-col gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+            <label className="flex flex-col gap-1.5 text-sm font-medium text-ink-muted">
               New username
               <input
                 name="newUsername"
                 type="text"
                 defaultValue={settings.dashboardUsername}
                 autoComplete="username"
-                className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className="rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
               />
             </label>
-            <label className="flex flex-col gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+            <label className="flex flex-col gap-1.5 text-sm font-medium text-ink-muted">
               New password
               <input
                 name="newPassword"
                 type="password"
                 autoComplete="new-password"
                 placeholder="Leave blank to keep current password"
-                className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className="rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
               />
             </label>
-            <label className="flex flex-col gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+            <label className="flex flex-col gap-1.5 text-sm font-medium text-ink-muted">
               Current password (required to save)
               <input
                 name="currentPassword"
                 type="password"
                 required
                 autoComplete="current-password"
-                className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className="rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
               />
             </label>
             <button
               type="submit"
-              className="mt-2 w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500 active:bg-blue-700"
+              className="mt-2 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-brand-ink transition hover:bg-brand-hover active:bg-brand-active"
             >
               Update credentials
             </button>
@@ -301,9 +267,9 @@ export default async function SettingsPage({
           <Banner error={params.secretError} />
           <form
             action={rotateSessionSecretAction}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900"
+            className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-panel p-6"
           >
-            <p className="text-sm text-slate-500 dark:text-slate-400">
+            <p className="text-sm text-ink-muted">
               A secret is set. Rotating it will log out every active session, including this one.
             </p>
             <button
@@ -319,16 +285,13 @@ export default async function SettingsPage({
   ];
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-8">
+    <main className="mx-auto w-full max-w-5xl px-6 py-8">
       <header className="mb-6">
-        <Link
-          href="/"
-          className="text-sm text-slate-500 transition hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400"
-        >
+        <Link href="/" className="text-sm text-ink-muted transition hover:text-brand">
           ← Back to dashboard
         </Link>
-        <h1 className="mt-2 text-xl font-semibold text-slate-900 dark:text-slate-100">Settings</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        <h1 className="mt-2 text-xl font-semibold tracking-tight text-ink">Settings</h1>
+        <p className="mt-1 text-sm text-ink-muted">
           Everything the dashboard needs to run, configurable from here - no environment variables required.
         </p>
       </header>

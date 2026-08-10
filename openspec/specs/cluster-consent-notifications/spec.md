@@ -63,7 +63,7 @@ The system SHALL require an additional explicit confirmation gesture, distinct f
 - **THEN** the corresponding decision (approve turn-off or approve delete) is recorded for that cluster
 
 ### Requirement: Snooze delays a request and requires a justification
-The system SHALL offer a snooze option on every consent notification it sends, independent of the tier's turn-off/delete configuration, letting the owner choose a delay of 1, 2, or 3 days. The system SHALL require a non-empty justification before recording a snooze decision, and SHALL persist that justification for display in the dashboard.
+The system SHALL offer a snooze option on every consent notification it sends, independent of the tier's turn-off/delete configuration, letting the owner choose a delay from an operator-configured list of durations (in days) - see "Snooze duration options are configurable" below. The system SHALL require a non-empty justification before recording a snooze decision, and SHALL persist that justification for display in the dashboard.
 
 #### Scenario: Owner snoozes with a justification
 - **WHEN** the owner chooses a snooze duration and provides a justification
@@ -72,6 +72,17 @@ The system SHALL offer a snooze option on every consent notification it sends, i
 #### Scenario: Owner attempts to snooze without a justification
 - **WHEN** the owner attempts to submit a snooze without providing a justification
 - **THEN** the snooze is not recorded and the request remains pending
+
+### Requirement: Snooze duration options are configurable
+The system SHALL let an operator configure the list of snooze durations (in days) offered to owners, as a non-empty set of distinct positive whole numbers, from the settings page. The system SHALL default to offering 1, 2, and 3 days when unset.
+
+#### Scenario: Operator changes the offered durations
+- **WHEN** an operator sets the snooze duration options to a different list of days and saves
+- **THEN** subsequent snooze prompts offer exactly that list of durations
+
+#### Scenario: Operator submits an invalid list
+- **WHEN** an operator submits a snooze duration list that is empty or contains no valid positive whole numbers
+- **THEN** the update is rejected and the previously configured durations remain in effect
 
 ### Requirement: A snoozed request resumes after its snooze period, even without a tier change
 The system SHALL re-send a fresh consent request once a snoozed cluster's snooze period ends, if the cluster's current tier is still configured to notify, even though the age-status tier itself has not changed since the snooze was granted.
@@ -118,7 +129,7 @@ The system SHALL leave a cluster's consent outcome (approved-turnoff, approved-d
 - **THEN** its consent state resets and a new notification may be sent according to that tier's configuration
 
 ### Requirement: Per-tier notification configuration, excluding "In Use"
-The system SHALL allow each age-status tier except "In Use" (that is: Stale and Forgotten) to be independently configured with a notify toggle, an ask-to-turn-off toggle, and an ask-to-delete toggle. The system SHALL NOT offer any notification configuration for "In Use", and SHALL NOT send a notification for a cluster while it is classified "In Use" regardless of any other setting.
+The system SHALL allow each age-status tier except "In Use" (that is: Stale and Forgotten) to be independently configured with a notify toggle, an ask-to-turn-off toggle, and an ask-to-delete toggle. The system SHALL NOT offer any notification configuration for "In Use", and SHALL NOT automatically send a notification for a cluster while it is classified "In Use" regardless of any other setting. This automatic exclusion does not apply to a manually-triggered request - see "Manual consent requests are always available" below.
 
 #### Scenario: Tier configured to notify with both asks
 - **WHEN** an operator enables notify, ask-to-turn-off, and ask-to-delete for the "Forgotten" tier
@@ -128,7 +139,18 @@ The system SHALL allow each age-status tier except "In Use" (that is: Stale and 
 - **WHEN** an operator enables notify but leaves ask-to-turn-off and ask-to-delete disabled for a tier
 - **THEN** a cluster transitioning into that tier triggers a notification with no turn-off or delete option (a snooze option is still offered - see below)
 
-#### Scenario: In Use is never notification-eligible
+#### Scenario: In Use is never automatically notification-eligible
 - **WHEN** a cluster's age status is "In Use"
-- **THEN** no notification is sent for it, and no per-tier configuration exists for "In Use" in settings
+- **THEN** no automatic notification is sent for it, and no per-tier configuration exists for "In Use" in settings
+
+### Requirement: Manual consent requests are always available
+The system SHALL let an operator manually send a consent request for any cluster regardless of its current age-status tier, including "In Use". A manual request for a cluster classified "In Use" SHALL offer both turn-off and delete consent options, since no per-tier configuration exists for that tier to derive them from. Once sent, a manually-triggered request follows the same pending/reminder/expiry lifecycle as any other, regardless of tier.
+
+#### Scenario: Manually requesting consent for an In Use cluster
+- **WHEN** an operator manually triggers a consent request for a cluster currently classified "In Use"
+- **THEN** the request is sent, offering both turn-off and delete options alongside snooze
+
+#### Scenario: A manually-sent In Use request still reaches expiry
+- **WHEN** a manually-sent consent request for a cluster classified "In Use" goes unanswered
+- **THEN** it receives reminders and eventually expires on the same schedule as any other pending request
 

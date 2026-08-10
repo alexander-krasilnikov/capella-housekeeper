@@ -14,7 +14,7 @@ const TIER_DESCRIPTIONS: Record<NotifiableAgeStatus, string> = {
 };
 
 const inputClass =
-  "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100";
+  "w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/30";
 
 function MaskedTokenField({
   name,
@@ -30,7 +30,7 @@ function MaskedTokenField({
   const [revealed, setRevealed] = useState(defaultValue === "");
 
   return (
-    <label className="flex flex-col gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+    <label className="flex flex-col gap-1.5 text-sm font-medium text-ink-muted">
       {label}
       <div className="flex gap-1.5">
         <input
@@ -43,12 +43,12 @@ function MaskedTokenField({
         <button
           type="button"
           onClick={() => setRevealed((r) => !r)}
-          className="shrink-0 rounded-lg border border-slate-300 px-2 text-xs text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          className="shrink-0 rounded-lg border border-line px-2 text-xs text-ink-muted hover:bg-panel-hover"
         >
           {revealed ? "Hide" : "Show"}
         </button>
       </div>
-      <span className="text-xs font-normal text-slate-400 dark:text-slate-500">{hint}</span>
+      <span className="text-xs font-normal text-ink-faint">{hint}</span>
     </label>
   );
 }
@@ -59,12 +59,14 @@ export default function NotificationsEditor({
   notificationsByTier,
   consentReminderMax,
   consentExpiryDays,
+  snoozeDayOptions,
 }: {
   slackBotToken: string;
   slackAppToken: string;
   notificationsByTier: NotificationsByTier;
   consentReminderMax: number;
   consentExpiryDays: number;
+  snoozeDayOptions: number[];
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [testing, startTest] = useTransition();
@@ -86,7 +88,7 @@ export default function NotificationsEditor({
     <form
       ref={formRef}
       action={saveNotificationsAction}
-      className="flex flex-col gap-5 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900"
+      className="flex flex-col gap-5 rounded-2xl border border-line bg-panel p-6"
     >
       <MaskedTokenField
         name="slackBotToken"
@@ -106,17 +108,17 @@ export default function NotificationsEditor({
           type="button"
           disabled={testing}
           onClick={runTest}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-panel-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
           {testing ? "Testing…" : "Test connection"}
         </button>
-        <span className="text-xs font-normal text-slate-400 dark:text-slate-500">
+        <span className="text-xs font-normal text-ink-faint">
           Tests the tokens currently in the two fields above, even if unsaved - checks the token itself, chat:write +
           im:write (by sending a real message to the bot's own DM), users:read.email, and the app-level token's
           connections:write.
         </span>
         {testResult && (
-          <ul className="flex w-full flex-col gap-1 rounded-lg border border-slate-200 p-3 text-xs dark:border-slate-700">
+          <ul className="flex w-full flex-col gap-1 rounded-lg border border-line p-3 text-xs">
             {testResult.checks.map((check) => (
               <li
                 key={check.label}
@@ -135,11 +137,11 @@ export default function NotificationsEditor({
       </div>
 
       <div>
-        <p className="mb-2 text-sm font-medium text-slate-600 dark:text-slate-300">Per-tier notifications</p>
-        <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+        <p className="mb-2 text-sm font-medium text-ink-muted">Per-tier notifications</p>
+        <div className="overflow-x-auto rounded-lg border border-line">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+              <tr className="bg-panel-hover text-left text-xs uppercase tracking-wide text-ink-muted">
                 <th className="px-3 py-2">Tier</th>
                 <th className="px-3 py-2">Notify</th>
                 <th className="px-3 py-2">Ask turn-off</th>
@@ -148,10 +150,10 @@ export default function NotificationsEditor({
             </thead>
             <tbody>
               {TIERS.map((tier) => (
-                <tr key={tier} className="border-t border-slate-100 dark:border-slate-800">
+                <tr key={tier} className="border-t border-line">
                   <td className="px-3 py-2 align-top">
-                    <div className="font-medium text-slate-700 dark:text-slate-200">{tier}</div>
-                    <div className="mt-0.5 max-w-xs text-xs font-normal text-slate-400 dark:text-slate-500">
+                    <div className="font-medium text-ink">{tier}</div>
+                    <div className="mt-0.5 max-w-xs text-xs font-normal text-ink-faint">
                       {TIER_DESCRIPTIONS[tier]}
                     </div>
                   </td>
@@ -183,7 +185,7 @@ export default function NotificationsEditor({
         </div>
       </div>
 
-      <label className="flex flex-col gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+      <label className="flex flex-col gap-1.5 text-sm font-medium text-ink-muted">
         Max reminders
         <input
           name="consentReminderMax"
@@ -194,12 +196,12 @@ export default function NotificationsEditor({
           defaultValue={consentReminderMax}
           className={inputClass}
         />
-        <span className="text-xs font-normal text-slate-400 dark:text-slate-500">
+        <span className="text-xs font-normal text-ink-faint">
           How many reminder re-sends a pending request gets before it expires.
         </span>
       </label>
 
-      <label className="flex flex-col gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+      <label className="flex flex-col gap-1.5 text-sm font-medium text-ink-muted">
         Expiry (days)
         <input
           name="consentExpiryDays"
@@ -210,14 +212,29 @@ export default function NotificationsEditor({
           defaultValue={consentExpiryDays}
           className={inputClass}
         />
-        <span className="text-xs font-normal text-slate-400 dark:text-slate-500">
+        <span className="text-xs font-normal text-ink-faint">
           How long a pending request may go unanswered before it expires.
+        </span>
+      </label>
+
+      <label className="flex flex-col gap-1.5 text-sm font-medium text-ink-muted">
+        Snooze period options (days)
+        <input
+          name="snoozeDayOptionsCsv"
+          type="text"
+          required
+          defaultValue={snoozeDayOptions.join(", ")}
+          placeholder="1, 2, 3"
+          className={inputClass}
+        />
+        <span className="text-xs font-normal text-ink-faint">
+          Comma-separated list of durations (in days) an owner can choose from when snoozing a request in Slack.
         </span>
       </label>
 
       <button
         type="submit"
-        className="mt-2 w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500 active:bg-blue-700"
+        className="mt-2 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-brand-ink transition hover:bg-brand-hover active:bg-brand-active"
       >
         Save
       </button>

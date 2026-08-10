@@ -10,11 +10,13 @@ import {
   verifyCurrentPassword,
   SESSION_COOKIE_NAME,
 } from "@/lib/auth";
+import { THEME_COOKIE_NAME, type ThemeMode } from "@/lib/theme";
 import { runSyncCycle } from "@/lib/sync";
 import { readSettings, writeSettings } from "@/lib/settings";
 import { sendManualConsentRequest, type ManualConsentResult } from "@/lib/notifications";
 import { manualTurnOff, manualDelete, type ManualActionResult } from "@/lib/manualActions";
 import { testSlackConnection, type SlackConnectionTestResult } from "@/lib/slack";
+import { getOrganization, CapellaApiError } from "@/lib/capellaClient";
 import { getSlackBotStatus, reconnectSlackBot, type SlackBotStatus } from "@/lib/slackBot";
 import type { NotifiableAgeStatus, NotificationsByTier, OrgConfig } from "@/types";
 
@@ -46,6 +48,22 @@ export async function logoutAction(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE_NAME);
   redirect("/login");
+}
+
+/** "system" clears the cookie rather than storing it - absence of the cookie already means system, and OS preference can change after the cookie was set. */
+export async function setThemeAction(mode: ThemeMode): Promise<void> {
+  const cookieStore = await cookies();
+  if (mode === "system") {
+    cookieStore.delete(THEME_COOKIE_NAME);
+    return;
+  }
+  cookieStore.set(THEME_COOKIE_NAME, mode, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  });
 }
 
 export interface RefreshResult {
@@ -81,21 +99,17 @@ const INT_SETTINGS_FIELDS = [
   "syncIntervalHours",
   "retentionDays",
 ] as const;
-const STRING_SETTINGS_FIELDS = ["capellaApiBaseUrl"] as const;
 
-/** Shared by every simple-scalar settings section (thresholds, sync/retention, API base URL) - each form only submits its own fields. */
+/** Shared by every simple-scalar settings section (thresholds, sync/retention) - each form only submits its own fields. */
 export async function saveSettingsAction(formData: FormData): Promise<void> {
   // Which sidebar section submitted this - carried through the redirect so
-  // the settings page can land back on it (these three sections share this
-  // one action/param pair, so the params alone can't tell them apart).
+  // the settings page can land back on it (these sections share this one
+  // action/param pair, so the params alone can't tell them apart).
   const section = String(formData.get("section") ?? "thresholds");
 
   const partial: Record<string, unknown> = {};
   for (const name of INT_SETTINGS_FIELDS) {
     if (formData.has(name)) partial[name] = Number.parseInt(String(formData.get(name)), 10);
-  }
-  for (const name of STRING_SETTINGS_FIELDS) {
-    if (formData.has(name)) partial[name] = String(formData.get(name));
   }
 
   const result = await writeSettings(partial);
@@ -106,6 +120,25 @@ export async function saveSettingsAction(formData: FormData): Promise<void> {
   revalidatePath("/settings");
   revalidatePath("/");
   redirect(`/settings?section=${section}&saved=1`);
+}
+
+export interface OrgNameResult {
+  ok: boolean;
+  name: string;
+  error?: string;
+}
+
+/** Looks up an organization's real display name from the Capella API - called as the operator types an org ID/API key into the settings form, before either is necessarily saved. */
+export async function fetchOrgNameAction(orgId: string, apiKey: string): Promise<OrgNameResult> {
+  if (!orgId || !apiKey) return { ok: false, name: "", error: "Organization ID and API key are required." };
+  const settings = await readSettings();
+  try {
+    const org = await getOrganization({ orgId, apiKey }, settings.capellaApiBaseUrl);
+    return { ok: true, name: org.name };
+  } catch (err) {
+    const message = err instanceof CapellaApiError ? err.message : "Couldn't reach Capella.";
+    return { ok: false, name: "", error: message };
+  }
 }
 
 export async function saveOrgsAction(formData: FormData): Promise<void> {
@@ -160,6 +193,21 @@ export async function saveCredentialsAction(formData: FormData): Promise<void> {
   redirect("/settings?credSaved=1");
 }
 
+/**
+ * Parses a comma-separated "1, 3, 7" form field into a deduped, ascending
+ * list of positive integers - invalid or blank entries are simply dropped
+ * rather than rejected here; the authoritative check (result must be
+ * non-empty) happens in writeSettings/validateSettings, same as every
+ * other setting.
+ */
+function parseSnoozeDayOptions(raw: string): number[] {
+  const values = raw
+    .split(",")
+    .map((entry) => Number.parseInt(entry.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  return Array.from(new Set(values)).sort((a, b) => a - b);
+}
+
 export async function saveNotificationsAction(formData: FormData): Promise<void> {
   const notificationsByTier: NotificationsByTier = Object.fromEntries(
     NOTIFIABLE_TIERS.map((tier) => [
@@ -178,6 +226,7 @@ export async function saveNotificationsAction(formData: FormData): Promise<void>
     notificationsByTier,
     consentReminderMax: Number.parseInt(String(formData.get("consentReminderMax")), 10),
     consentExpiryDays: Number.parseInt(String(formData.get("consentExpiryDays")), 10),
+    snoozeDayOptions: parseSnoozeDayOptions(String(formData.get("snoozeDayOptionsCsv") ?? "")),
   });
   if (!result.ok) {
     redirect(`/settings?section=notifications&error=${encodeURIComponent(result.error)}`);
