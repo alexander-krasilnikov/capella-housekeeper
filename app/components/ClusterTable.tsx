@@ -20,11 +20,18 @@ import { formatUsd } from "@/lib/format";
 import SendConsentRequestButton from "./SendConsentRequestButton";
 import ManualTurnOffButton from "./ManualTurnOffButton";
 import ManualDeleteButton from "./ManualDeleteButton";
+import ClusterHistoryButton from "./ClusterHistoryButton";
+import FormattedDateTime, { formatDateTime } from "./FormattedDateTime";
 import type { AgeStatus, ConsentActionOutcome, ConsentStatus } from "@/types";
 
 declare module "@tanstack/react-table" {
   interface ColumnMeta<TData, TValue> {
     widthPct: number;
+  }
+  interface TableMeta<TData> {
+    /** Ask-button result per cluster, keyed by clusterId - lifted out of SendConsentRequestButton so its message can render under the Consent badge instead of the Action cell that triggered it. */
+    askResults: Record<string, { ok: boolean; message: string } | null | undefined>;
+    setAskResult: (clusterId: string, result: { ok: boolean; message: string } | null) => void;
   }
 }
 
@@ -66,6 +73,7 @@ export interface ClusterRow {
   actualCostUnavailableReason: "credits-based" | "no-access" | "error" | null;
   statusLabel: string;
   statusIsOff: boolean;
+  ownerEligibleForAsk: boolean;
   ageStatus: AgeStatus;
   consentStatus: ConsentStatus;
   actionOutcome: ConsentActionOutcome;
@@ -93,6 +101,7 @@ const DETAIL_GROUP_BY_COLUMN_ID: Record<string, DetailGroup> = {
   status: "Cluster",
   ageStatus: "Cluster",
   consent: "Workflow",
+  action: "Cluster",
 };
 
 const ACTUAL_COST_UNAVAILABLE_LABEL: Record<"credits-based" | "no-access" | "error", string> = {
@@ -105,49 +114,6 @@ function actualCostDisplayLabel(row: ClusterRow): string {
   if (row.actualCost !== null) return formatUsd(row.actualCost);
   if (row.actualCostUnavailableReason) return ACTUAL_COST_UNAVAILABLE_LABEL[row.actualCostUnavailableReason];
   return "—";
-}
-
-/**
- * Formats a timestamp using the visiting browser's own locale (region,
- * calendar, 12h/24h convention) rather than a hardcoded one - `undefined`
- * as the locale argument means "whatever this runtime's default is",
- * which is the actual browser once this runs client-side. 2-digit year,
- * no seconds, per explicit request.
- */
-function formatDateTime(ms: number | null): string {
-  if (ms === null) return "—";
-  return new Date(ms).toLocaleString(undefined, {
-    year: "2-digit",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-  });
-}
-
-/**
- * Renders a locale-formatted date/time, correctly - not just quietly.
- * A Client Component's first render also happens on the server (for the
- * initial HTML), where `toLocaleString(undefined, ...)` resolves to the
- * Node server's locale, not the browser's. Suppressing the resulting
- * hydration warning is not enough on its own: React only skips *warning*
- * about that mismatch, it doesn't schedule a re-render to correct it, so
- * without something to trigger one, the server's (wrong) locale would
- * stick permanently. This renders a neutral, locale-independent
- * placeholder for the server render and the first client paint (which
- * therefore match exactly - no mismatch, nothing to suppress), then swaps
- * to the real browser-formatted value once mounted, via a genuine
- * post-mount state update.
- */
-function FormattedDateTime({ ms }: { ms: number | null }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (ms === null) return <>—</>;
-  if (!mounted) return <>…</>;
-  return <>{formatDateTime(ms)}</>;
 }
 
 /** Combines consentStatus and actionOutcome into one label+color - e.g. a "pending" decision reads differently from an "approved-turnoff" that's already been "performed" vs. merely "failed" and awaiting retry. */
@@ -311,10 +277,40 @@ const columns = [
     id: "consent",
     header: "Consent",
     meta: { widthPct: 9 },
+    cell: (info) => {
+      const askResult = info.table.options.meta?.askResults[info.row.original.clusterId];
+      return (
+        <span className="flex flex-col gap-1">
+          <ConsentBadge status={info.getValue()} outcome={info.row.original.actionOutcome} />
+          {askResult && (
+            <span
+              className={`break-words text-xs ${askResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
+            >
+              {askResult.message}
+            </span>
+          )}
+        </span>
+      );
+    },
+  }),
+  columnHelper.display({
+    id: "action",
+    header: "Action",
+    meta: { widthPct: 13 },
+    enableSorting: false,
     cell: (info) => (
       <span className="flex flex-wrap items-center gap-1.5">
-        <ConsentBadge status={info.getValue()} outcome={info.row.original.actionOutcome} />
-        <SendConsentRequestButton clusterId={info.row.original.clusterId} />
+        <SendConsentRequestButton
+          clusterId={info.row.original.clusterId}
+          disabled={!info.row.original.ownerEligibleForAsk}
+          onResult={(result) => info.table.options.meta?.setAskResult(info.row.original.clusterId, result)}
+        />
+        <ManualTurnOffButton
+          clusterId={info.row.original.clusterId}
+          clusterName={info.row.original.name}
+          disabled={info.row.original.statusIsOff}
+        />
+        <ManualDeleteButton clusterId={info.row.original.clusterId} clusterName={info.row.original.name} />
       </span>
     ),
   }),
@@ -350,6 +346,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
   const [detailOpenIds, setDetailOpenIds] = useState<Set<string>>(new Set());
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
+  const [askResults, setAskResults] = useState<Record<string, { ok: boolean; message: string } | null>>({});
 
   // Restore persisted column visibility/order/sort/page-size once on mount.
   // Reading localStorage during render would break server/client hydration,
@@ -403,6 +400,10 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
     onColumnVisibilityChange: setColumnVisibility,
     onPaginationChange: setPagination,
     globalFilterFn: globalFuzzyFilter,
+    meta: {
+      askResults,
+      setAskResult: (clusterId, result) => setAskResults((prev) => ({ ...prev, [clusterId]: result })),
+    },
     // Default true: TanStack resets the page index as a side effect of
     // computing the row model whenever the filtered set changes, which
     // happens synchronously during the very first render (before this
@@ -716,15 +717,9 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                                         </dd>
                                       </div>
                                       <div>
-                                        <dt className="text-ink-faint">Actions</dt>
+                                        <dt className="text-ink-faint">History</dt>
                                         <dd className="flex flex-wrap items-center gap-2">
-                                          {!row.original.statusIsOff && (
-                                            <ManualTurnOffButton
-                                              clusterId={row.original.clusterId}
-                                              clusterName={row.original.name}
-                                            />
-                                          )}
-                                          <ManualDeleteButton
+                                          <ClusterHistoryButton
                                             clusterId={row.original.clusterId}
                                             clusterName={row.original.name}
                                           />

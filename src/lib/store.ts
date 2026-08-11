@@ -1,6 +1,9 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { ClusterRecord, ClusterSnapshot } from "../types";
+import type { ClusterRecord, ClusterSnapshot, HistoryTrigger } from "../types";
+import { historyEntriesDiffer } from "./historyFields";
+
+export { historyEntriesDiffer } from "./historyFields";
 
 const CLUSTERS_FILE = "clusters.json";
 const HISTORY_FILE = "history.json";
@@ -76,8 +79,14 @@ export async function readClusters(): Promise<ClusterRecord[]> {
   return records.map(withConsentDefaults);
 }
 
+/** Entries written before `trigger` existed default to "sync" - the only writer that existed at the time. */
+function withHistoryTriggerDefault(snapshot: ClusterSnapshot): ClusterSnapshot {
+  return { ...snapshot, trigger: snapshot.trigger ?? "sync" };
+}
+
 export async function readHistory(): Promise<ClusterSnapshot[]> {
-  return readJsonFile<ClusterSnapshot[]>(historyPath(), []);
+  const snapshots = await readJsonFile<ClusterSnapshot[]>(historyPath(), []);
+  return snapshots.map(withHistoryTriggerDefault);
 }
 
 export async function appendHistory(snapshots: ClusterSnapshot[]): Promise<void> {
@@ -86,6 +95,23 @@ export async function appendHistory(snapshots: ClusterSnapshot[]): Promise<void>
     const existing = await readJsonFile<ClusterSnapshot[]>(historyPath(), []);
     await writeJsonFileAtomic(historyPath(), [...existing, ...snapshots]);
   });
+}
+
+/**
+ * Single-record gated append for call sites outside the sync cycle (which
+ * batches many records through `historyEntriesDiffer` itself before one
+ * combined `appendHistory` call - see sync.ts). `prior` is the live record
+ * as it was immediately before this mutation; `null` means "not previously
+ * known" and always appends, same as a newly-discovered cluster during sync.
+ */
+export async function appendHistoryIfChanged(
+  prior: ClusterRecord | null,
+  next: ClusterRecord,
+  trigger: HistoryTrigger,
+  takenAt: string,
+): Promise<void> {
+  if (prior && !historyEntriesDiffer(prior, next)) return;
+  await appendHistory([{ clusterId: next.clusterId, takenAt, record: next, trigger }]);
 }
 
 /** Merge one org/project sync pass into the flat cross-org collection. */

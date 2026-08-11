@@ -1,5 +1,5 @@
 import { turnOffCluster, deleteCluster, CapellaApiError } from "./capellaClient";
-import { readClusters, upsertClusters, removeClusters, appendHistory } from "./store";
+import { readClusters, upsertClusters, removeClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
 import { supersedeLiveMessage } from "./notifications";
 import type { ClusterRecord, Settings } from "../types";
@@ -51,8 +51,10 @@ export async function manualTurnOff(clusterId: string): Promise<ManualActionResu
 
   const fresh = (await readClusters()).find((c) => c.clusterId === clusterId);
   if (fresh) {
+    const prior = { ...fresh };
     fresh.config = { ...fresh.config, status: "turnedOff" };
     await upsertClusters([fresh]);
+    await appendHistoryIfChanged(prior, fresh, "manual-turn-off", new Date().toISOString());
   }
 
   return { ok: true, message: `Turned off ${record.clusterName}.` };
@@ -81,7 +83,8 @@ export async function manualDelete(clusterId: string): Promise<ManualActionResul
   const fresh = (await readClusters()).find((c) => c.clusterId === clusterId);
   if (fresh) {
     const now = new Date().toISOString();
-    await appendHistory([{ clusterId, takenAt: now, record: { ...fresh, deletedAt: now, lastSyncedAt: now } }]);
+    const deleted = { ...fresh, deletedAt: now, lastSyncedAt: now };
+    await appendHistoryIfChanged(fresh, deleted, "manual-delete", now);
     await removeClusters([clusterId]);
   }
 

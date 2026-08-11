@@ -1,5 +1,5 @@
 import { App, SocketModeReceiver } from "@slack/bolt";
-import { readClusters, upsertClusters } from "./store";
+import { readClusters, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
 import {
   buildSnoozeModalView,
@@ -92,8 +92,10 @@ async function handleConsentAction(action: DirectConsentAction, clusterId: strin
   const record = clusters.find((c) => c.clusterId === clusterId);
   if (!record || record.consentStatus !== "pending") return;
 
+  const prior = { ...record };
   record.consentStatus = ACTION_TO_CONSENT_STATUS[action];
   await upsertClusters([record]);
+  await appendHistoryIfChanged(prior, record, "slack-decision", new Date().toISOString());
 
   if (record.slackChannelId && record.slackMessageTs) {
     await updateMessage(
@@ -123,11 +125,13 @@ async function handleSnoozeSubmission(
   const record = clusters.find((c) => c.clusterId === clusterId);
   if (!record || record.consentStatus !== "pending") return;
 
+  const prior = { ...record };
   const snoozeUntilMs = Date.now() + days * DAY_MS;
   record.consentStatus = "snoozed";
   record.snoozeUntil = new Date(snoozeUntilMs).toISOString();
   record.snoozeJustification = justification;
   await upsertClusters([record]);
+  await appendHistoryIfChanged(prior, record, "slack-decision", new Date().toISOString());
 
   if (channelId && messageTs) {
     const until = new Date(snoozeUntilMs).toISOString().slice(0, 10);

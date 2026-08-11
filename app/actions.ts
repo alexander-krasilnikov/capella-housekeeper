@@ -18,6 +18,7 @@ import { manualTurnOff, manualDelete, type ManualActionResult } from "@/lib/manu
 import { testSlackConnection, type SlackConnectionTestResult } from "@/lib/slack";
 import { getOrganization, CapellaApiError } from "@/lib/capellaClient";
 import { getSlackBotStatus, reconnectSlackBot, type SlackBotStatus } from "@/lib/slackBot";
+import { getClusterHistory, type HistoryTimelineEntry } from "@/lib/historyView";
 import type { NotifiableAgeStatus, NotificationsByTier, OrgConfig } from "@/types";
 
 const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Stale", "Forgotten"];
@@ -255,6 +256,11 @@ export async function manualDeleteAction(clusterId: string): Promise<ManualActio
   const result = await manualDelete(clusterId);
   if (result.ok) revalidatePath("/");
   return result;
+}
+
+/** Feeds the per-cluster history modal - see app/components/ClusterHistoryButton.tsx. */
+export async function getClusterHistoryAction(clusterId: string): Promise<HistoryTimelineEntry[]> {
+  return getClusterHistory(clusterId);
 }
 
 /** Polled by the client-side connection LED - see app/components/SlackConnectionIndicator.tsx. */

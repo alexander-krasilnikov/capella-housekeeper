@@ -3,13 +3,17 @@ import { readClusters } from "@/lib/store";
 import { readSettings } from "@/lib/settings";
 import { formatConfigSummary, formatStatusLabel } from "@/lib/configSummary";
 import { isAlreadyOff } from "@/lib/slack";
+import { isEmailLike } from "@/lib/notifications";
 import { ageDaysBetween, ageHoursBetween, formatAge } from "@/lib/format";
 import { computeAgeStatus } from "@/lib/ageStatus";
-import ClusterTable, { type ClusterRow } from "./components/ClusterTable";
+import { type ClusterRow } from "./components/ClusterTable";
+import { type HistoryRow } from "./components/HistoryTable";
+import DashboardTabs from "./components/DashboardTabs";
 import RefreshButton from "./components/RefreshButton";
 import SlackConnectionIndicator from "./components/SlackConnectionIndicator";
 import ThemeToggle from "./components/ThemeToggle";
 import { getSlackBotStatus } from "@/lib/slackBot";
+import { getLifecycleAuditLog, describeAuditEntry, TRIGGER_LABEL } from "@/lib/historyView";
 import { logoutAction } from "./actions";
 
 // This page reads the local JSON store directly (not via fetch()), so
@@ -29,7 +33,7 @@ function formatStorage(storage: { type?: string; sizeGb?: number; iops?: number 
 }
 
 export default async function DashboardPage() {
-  const [clusters, settings] = await Promise.all([readClusters(), readSettings()]);
+  const [clusters, settings, auditLog] = await Promise.all([readClusters(), readSettings(), getLifecycleAuditLog()]);
   const now = Date.now();
 
   // Dates/times are intentionally passed as raw timestamps, not
@@ -60,6 +64,7 @@ export default async function DashboardPage() {
       actualCostUnavailableReason: c.actualCost.unavailableReason ?? null,
       statusLabel: formatStatusLabel(c.config.status),
       statusIsOff: isAlreadyOff(c.config.status),
+      ownerEligibleForAsk: isEmailLike(c.ownerDerived),
       consentStatus: c.consentStatus,
       actionOutcome: c.actionOutcome,
       snoozeUntilMs: c.snoozeUntil ? new Date(c.snoozeUntil).getTime() : null,
@@ -74,6 +79,18 @@ export default async function DashboardPage() {
       lastSyncedAtMs: new Date(c.lastSyncedAt).getTime(),
     };
   });
+
+  // Same raw-timestamp-not-pre-formatted-string reasoning as `rows` above.
+  const historyRows: HistoryRow[] = auditLog.map((entry) => ({
+    clusterId: entry.clusterId,
+    clusterName: entry.clusterName,
+    org: entry.orgName,
+    project: entry.projectName,
+    takenAtMs: new Date(entry.takenAt).getTime(),
+    trigger: entry.trigger,
+    triggerLabel: TRIGGER_LABEL[entry.trigger],
+    description: describeAuditEntry(entry),
+  }));
 
   return (
     <main className="mx-auto w-full px-6 py-8 sm:w-[90%]">
@@ -106,7 +123,7 @@ export default async function DashboardPage() {
           </form>
         </div>
       </header>
-      <ClusterTable rows={rows} />
+      <DashboardTabs clusterRows={rows} historyRows={historyRows} />
     </main>
   );
 }

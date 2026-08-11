@@ -89,10 +89,21 @@ export interface ClusterRecord {
   snoozeJustification: string | null;
 }
 
+/** What caused a history entry to be written - narration-only, see cluster-sync spec "History entries are written at the moment a mutation occurs". */
+export type HistoryTrigger =
+  | "sync"
+  | "manual-turn-off"
+  | "manual-delete"
+  | "slack-decision"
+  | "manual-consent-request"
+  | "reconciliation";
+
 export interface ClusterSnapshot {
   clusterId: string;
   takenAt: string;
   record: ClusterRecord;
+  /** Absent (undefined) for entries written before this field existed - readHistory() defaults those to "sync", the only writer that existed at the time. */
+  trigger?: HistoryTrigger;
 }
 
 export interface StoreData {

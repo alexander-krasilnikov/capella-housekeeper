@@ -17,6 +17,7 @@ import {
   removeClusters,
   appendHistory,
   purgeExpiredHistory,
+  historyEntriesDiffer,
 } from "./store";
 import { readSettings } from "./settings";
 import { applyConsentNotifications } from "./notifications";
@@ -308,7 +309,7 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
         };
 
         records.push(record);
-        snapshots.push({ clusterId: record.clusterId, takenAt: now, record });
+        snapshots.push({ clusterId: record.clusterId, takenAt: now, record, trigger: "sync" });
       }
     }
 
@@ -364,12 +365,29 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
     const fresh = freshExisting.get(clusterId) ?? existingById.get(clusterId);
     if (!fresh) continue;
     const deletedAt = fresh.deletedAt ?? now;
-    snapshots.push({ clusterId, takenAt: now, record: { ...fresh, deletedAt, lastSyncedAt: now } });
+    snapshots.push({
+      clusterId,
+      takenAt: now,
+      record: { ...fresh, deletedAt, lastSyncedAt: now },
+      trigger: "sync",
+    });
   }
+
+  // Gated against the freshest available prior state (freshExisting, falling
+  // back to the top-of-cycle existingById for a brand-new cluster that isn't
+  // in either), not blindly appended - see cluster-sync spec "Cluster record
+  // persistence" and design.md's note on why this must be freshExisting: a
+  // Slack click or reconciliation outcome landing mid-cycle already wrote its
+  // own history entry the moment it happened, and gating against the stale
+  // existingById snapshot here would silently duplicate it.
+  const changedSnapshots = snapshots.filter((snapshot) => {
+    const prior = freshExisting.get(snapshot.clusterId) ?? existingById.get(snapshot.clusterId) ?? null;
+    return !prior || historyEntriesDiffer(prior, snapshot.record);
+  });
 
   await upsertClusters(records);
   await removeClusters(removedClusterIds);
-  await appendHistory(snapshots);
+  await appendHistory(changedSnapshots);
   await purgeExpiredHistory(new Date(now), settings.retentionDays);
 
   return {

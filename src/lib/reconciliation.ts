@@ -1,5 +1,5 @@
 import { turnOffCluster, deleteCluster, CapellaApiError } from "./capellaClient";
-import { readClusters, upsertClusters } from "./store";
+import { readClusters, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
 import { computeRecordAgeStatus } from "./notifications";
 import type { ConsentActionOutcome } from "../types";
@@ -59,8 +59,10 @@ export interface ReconciliationResult {
 async function applyActionOutcome(clusterId: string, outcome: ConsentActionOutcome): Promise<void> {
   const fresh = (await readClusters()).find((c) => c.clusterId === clusterId);
   if (!fresh) return;
+  const prior = { ...fresh };
   fresh.actionOutcome = outcome;
   await upsertClusters([fresh]);
+  await appendHistoryIfChanged(prior, fresh, "reconciliation", new Date().toISOString());
 }
 
 /**

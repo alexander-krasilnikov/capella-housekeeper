@@ -154,6 +154,25 @@ The system SHALL let an operator manually send a consent request for any cluster
 - **WHEN** a manually-sent consent request for a cluster classified "In Use" goes unanswered
 - **THEN** it receives reminders and eventually expires on the same schedule as any other pending request
 
+### Requirement: Manual consent request control disabled without an eligible owner
+
+The system SHALL disable the manual consent-request (Ask) control for a cluster whose derived owner is absent or not email-shaped, rather than leaving it clickable and only reporting failure after activation.
+
+#### Scenario: Owner is not email-shaped
+
+- **WHEN** a cluster's derived owner is a raw identifier rather than an email address
+- **THEN** the manual consent-request control for that cluster is shown disabled
+
+#### Scenario: Owner is absent
+
+- **WHEN** a cluster has no derived owner
+- **THEN** the manual consent-request control for that cluster is shown disabled
+
+#### Scenario: Owner is email-shaped
+
+- **WHEN** a cluster's derived owner is an email address
+- **THEN** the manual consent-request control for that cluster is enabled
+
 ### Requirement: Notification body states only a brief summary of each offered action
 The system SHALL state, for each offered action in a consent notification's body, only a one-line summary of what that action does. For turn-off and delete specifically, the system SHALL NOT restate their full explanatory detail in the message body; that full detail SHALL appear only in the confirmation dialog required before the corresponding decision is recorded.
 

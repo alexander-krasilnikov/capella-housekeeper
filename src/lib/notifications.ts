@@ -1,7 +1,7 @@
 import { ageHoursBetween } from "./format";
 import { computeAgeStatus } from "./ageStatus";
 import { buildConsentMessage, isAlreadyOff, sendConsentDM, updateMessage } from "./slack";
-import { readClusters, upsertClusters } from "./store";
+import { readClusters, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
 import type { AgeStatus, ClusterRecord, Settings, TierNotificationConfig } from "../types";
 
@@ -213,6 +213,7 @@ export async function sendManualConsentRequest(clusterId: string): Promise<Manua
   if (!freshRecord) {
     return { ok: false, message: "Cluster disappeared before the request could be recorded." };
   }
+  const priorRecord = { ...freshRecord };
   freshRecord.lastNotifiedAgeStatus = tier;
   freshRecord.consentStatus = "pending";
   freshRecord.consentCycleStartedAt = new Date(nowMs).toISOString();
@@ -222,6 +223,7 @@ export async function sendManualConsentRequest(clusterId: string): Promise<Manua
   freshRecord.slackChannelId = sent.channelId;
   freshRecord.slackMessageTs = sent.messageTs;
   await upsertClusters([freshRecord]);
+  await appendHistoryIfChanged(priorRecord, freshRecord, "manual-consent-request", new Date(nowMs).toISOString());
 
   const asks = [
     tierConfig.askTurnOff && !isAlreadyOff(freshRecord.config.status) && "turn off",

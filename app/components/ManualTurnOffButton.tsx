@@ -1,12 +1,29 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { manualTurnOffAction } from "../actions";
 
-export default function ManualTurnOffButton({ clusterId, clusterName }: { clusterId: string; clusterName: string }) {
+export default function ManualTurnOffButton({
+  clusterId,
+  clusterName,
+  disabled = false,
+}: {
+  clusterId: string;
+  clusterName: string;
+  disabled?: boolean;
+}) {
   const [pending, startTransition] = useTransition();
-  const [confirming, setConfirming] = useState(false);
+  const [open, setOpen] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
 
   if (result) {
     return (
@@ -18,41 +35,60 @@ export default function ManualTurnOffButton({ clusterId, clusterName }: { cluste
     );
   }
 
-  if (confirming) {
-    return (
-      <span className="inline-flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-ink-muted">Turn off {clusterName}?</span>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => {
-            startTransition(async () => {
-              setResult(await manualTurnOffAction(clusterId));
-            });
-          }}
-          className="rounded-md border border-amber-300 px-2 py-0.5 font-semibold text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/40"
-        >
-          {pending ? "Turning off…" : "Confirm"}
-        </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => setConfirming(false)}
-          className="rounded-md border border-line px-2 py-0.5 text-ink-muted transition hover:bg-panel-hover disabled:opacity-50"
-        >
-          Cancel
-        </button>
-      </span>
-    );
-  }
-
   return (
-    <button
-      type="button"
-      onClick={() => setConfirming(true)}
-      className="rounded-md border border-amber-300 px-2 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/40"
-    >
-      Turn off
-    </button>
+    <>
+      <button
+        type="button"
+        disabled={disabled}
+        title={disabled ? "Cluster is already off" : undefined}
+        onClick={() => setOpen(true)}
+        className="rounded-md border border-amber-300 px-2 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/40"
+      >
+        Turn off
+      </button>
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Turn off ${clusterName}`}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-xl border border-line bg-panel p-4 shadow-xl"
+          >
+            <p className="text-sm font-semibold text-ink">Turn off this cluster?</p>
+            <p className="mt-1 text-xs text-ink-muted">
+              <span className="font-mono font-semibold">{clusterName}</span> will be turned off immediately.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setOpen(false)}
+                className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-panel-hover disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  startTransition(async () => {
+                    const r = await manualTurnOffAction(clusterId);
+                    setResult(r);
+                    setOpen(false);
+                  });
+                }}
+                className="rounded-md border border-amber-600 bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700"
+              >
+                {pending ? "Turning off…" : "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
