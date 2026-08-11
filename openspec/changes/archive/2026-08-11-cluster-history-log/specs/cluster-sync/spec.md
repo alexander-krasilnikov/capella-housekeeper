@@ -9,7 +9,7 @@ The fields compared for this purpose are: `config`, `actualCost.amountUsd`, `del
 - **WHEN** a cluster appears in a Capella API response that is not yet in the local store
 - **THEN** the system creates a new record for it tagged with its organization and project IDs, and appends its first history entry
 
-#### Scenario: Existing cluster's compared fields changed
+#### Scenario: Existing cluster updated
 - **WHEN** a previously known cluster's compared fields (configuration, actual cost, deletion status, derived owner, or any consent/lifecycle field) differ from its most recently recorded history entry
 - **THEN** the system updates its stored record and appends a new historical snapshot entry
 
