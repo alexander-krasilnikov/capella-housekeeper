@@ -6,3 +6,4 @@ data/
 .env.local
 *.log
 *.tsbuildinfo
+.DS_Store 
