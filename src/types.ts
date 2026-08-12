@@ -2,6 +2,8 @@ export interface OrgConfig {
   orgId: string;
   /** Fallback label if the org name can't be fetched from the API (e.g. transient error). */
   orgName?: string;
+  /** Fallback label if the project summary can't be fetched - either a single project's name, or "All projects" when the key can see more than one. */
+  projectSummary?: string;
   apiKey: string;
 }
 

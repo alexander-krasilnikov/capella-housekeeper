@@ -46,17 +46,6 @@ The system SHALL fit the table within the viewport width without a horizontal sc
 - **WHEN** the viewport is narrower than 1024px
 - **THEN** the table reduces its font size and cell padding so words continue to wrap at natural boundaries rather than breaking mid-word
 
-### Requirement: Table width matches its container proportionally
-The system SHALL size the table to 90% of its available container width on screens 640px and wider, and to the full container width below that, so it neither hugs the container's edges on spacious layouts nor wastes space on constrained ones.
-
-#### Scenario: Table centered with margin on a wide screen
-- **WHEN** the dashboard is viewed on a screen 640px or wider
-- **THEN** the table occupies 90% of its container's width, centered
-
-#### Scenario: Table uses full width on a narrow screen
-- **WHEN** the dashboard is viewed on a screen narrower than 640px
-- **THEN** the table occupies the full width of its container
-
 ### Requirement: Compact configuration summary
 The system SHALL summarize each cluster's configuration as a single human-readable string combining node count, per-node compute specification, cloud provider, and region, rather than one column per raw configuration field.
 
@@ -170,4 +159,11 @@ The system SHALL display a single "Action" column, positioned as the rightmost c
 
 - **WHEN** a cluster row is expanded
 - **THEN** the detail panel shows no Turn off or Delete control
+
+### Requirement: Table matches full container width
+The system SHALL size the table to the full width of its available container at every viewport width, relying on the container's own padding (not a proportional inset) to keep the table from hugging the container's edges.
+
+#### Scenario: Table fills its container at any viewport width
+- **WHEN** the dashboard is viewed at any viewport width
+- **THEN** the table occupies the full width of its container, with spacing from the container's edges coming from the container's own padding rather than the table itself being narrower than its container
 

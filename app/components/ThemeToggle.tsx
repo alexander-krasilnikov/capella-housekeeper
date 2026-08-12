@@ -14,7 +14,66 @@ function resolveSystemTheme(): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-export default function ThemeToggle() {
+function SunIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="10" cy="10" r="3.5" />
+      <path d="M10 2.5v2M10 15.5v2M3.5 10h-2M18.5 10h-2M5.6 5.6 4.2 4.2M15.8 15.8l-1.4-1.4M5.6 14.4l-1.4 1.4M15.8 4.2l-1.4 1.4" />
+    </svg>
+  );
+}
+
+function MoonIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M16 11.5A6.5 6.5 0 0 1 8.5 4a6.5 6.5 0 1 0 7.5 7.5Z" />
+    </svg>
+  );
+}
+
+function MonitorIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="14" height="9.5" rx="1.5" />
+      <path d="M7 17.5h6M10 13.5v4" />
+    </svg>
+  );
+}
+
+const MODE_ICON: Record<ThemeMode, (props: { className?: string }) => React.ReactElement> = {
+  light: SunIcon,
+  dark: MoonIcon,
+  system: MonitorIcon,
+};
+
+export default function ThemeToggle({ collapsed = false }: { collapsed?: boolean }) {
   // null until mounted: the actual mode lives in the server-rendered
   // data-theme-mode attribute (and the bootstrap script may have already
   // resolved "system"), neither of which this component can read during
@@ -39,6 +98,21 @@ export default function ThemeToggle() {
   }
 
   const active = mode ?? "system";
+
+  if (collapsed) {
+    const ActiveIcon = MODE_ICON[active];
+    const next = OPTIONS[(OPTIONS.findIndex((o) => o.mode === active) + 1) % OPTIONS.length].mode;
+    return (
+      <button
+        type="button"
+        onClick={() => select(next)}
+        title={`Theme: ${OPTIONS.find((o) => o.mode === active)?.label} (click for ${OPTIONS.find((o) => o.mode === next)?.label})`}
+        className="flex items-center justify-center rounded-lg p-2 text-ink-muted transition hover:bg-panel-hover hover:text-ink"
+      >
+        <ActiveIcon className="h-5 w-5 shrink-0" />
+      </button>
+    );
+  }
 
   return (
     <div

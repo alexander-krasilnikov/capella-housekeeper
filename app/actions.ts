@@ -16,7 +16,7 @@ import { readSettings, writeSettings } from "@/lib/settings";
 import { sendManualConsentRequest, type ManualConsentResult } from "@/lib/notifications";
 import { manualTurnOff, manualDelete, type ManualActionResult } from "@/lib/manualActions";
 import { testSlackConnection, type SlackConnectionTestResult } from "@/lib/slack";
-import { getOrganization, CapellaApiError } from "@/lib/capellaClient";
+import { getOrganization, listProjects, CapellaApiError } from "@/lib/capellaClient";
 import { getSlackBotStatus, reconnectSlackBot, type SlackBotStatus } from "@/lib/slackBot";
 import { getClusterHistory, type HistoryTimelineEntry } from "@/lib/historyView";
 import type { NotifiableAgeStatus, NotificationsByTier, OrgConfig } from "@/types";
@@ -142,15 +142,46 @@ export async function fetchOrgNameAction(orgId: string, apiKey: string): Promise
   }
 }
 
+export interface OrgProjectSummaryResult {
+  ok: boolean;
+  summary: string;
+  error?: string;
+}
+
+/**
+ * Summarizes which project(s) an org's API key can see - Capella API keys
+ * can be scoped to the whole organization or to a single project, and
+ * there's no field that states which; the only signal is how many projects
+ * `listProjects` actually returns for that key. Exactly one means a
+ * project-scoped key, so its name is shown; more than one means an
+ * org-level key that can see the whole org, shown as "All projects" rather
+ * than an arbitrary pick from the list.
+ */
+export async function fetchOrgProjectSummaryAction(orgId: string, apiKey: string): Promise<OrgProjectSummaryResult> {
+  if (!orgId || !apiKey) return { ok: false, summary: "", error: "Organization ID and API key are required." };
+  const settings = await readSettings();
+  try {
+    const projects = await listProjects({ orgId, apiKey }, settings.capellaApiBaseUrl);
+    if (projects.length === 0) return { ok: false, summary: "", error: "No projects visible to this key." };
+    if (projects.length === 1) return { ok: true, summary: projects[0].name };
+    return { ok: true, summary: "All projects" };
+  } catch (err) {
+    const message = err instanceof CapellaApiError ? err.message : "Couldn't reach Capella.";
+    return { ok: false, summary: "", error: message };
+  }
+}
+
 export async function saveOrgsAction(formData: FormData): Promise<void> {
   const orgIds = formData.getAll("orgId").map(String);
   const orgNames = formData.getAll("orgName").map(String);
+  const projectSummaries = formData.getAll("projectSummary").map(String);
   const apiKeys = formData.getAll("apiKey").map(String);
 
   const capellaOrgs: OrgConfig[] = orgIds
     .map((rawOrgId, i) => ({
       orgId: rawOrgId.trim(),
       orgName: orgNames[i]?.trim() || undefined,
+      projectSummary: projectSummaries[i]?.trim() || undefined,
       apiKey: apiKeys[i]?.trim() ?? "",
     }))
     // Drop rows left fully blank (e.g. an unused "add another" row never filled in).

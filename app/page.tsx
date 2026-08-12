@@ -1,6 +1,7 @@
-import Link from "next/link";
-import { readClusters } from "@/lib/store";
+import { readClusters, readHistory } from "@/lib/store";
 import { readSettings } from "@/lib/settings";
+import type { CostSnapshot } from "@/lib/costSeries";
+import type { ClusterLifetime } from "@/lib/clusterCounts";
 import { formatConfigSummary, formatStatusLabel } from "@/lib/configSummary";
 import { isAlreadyOff } from "@/lib/slack";
 import { isEmailLike } from "@/lib/notifications";
@@ -9,12 +10,8 @@ import { computeAgeStatus } from "@/lib/ageStatus";
 import { type ClusterRow } from "./components/ClusterTable";
 import { type HistoryRow } from "./components/HistoryTable";
 import DashboardTabs from "./components/DashboardTabs";
-import RefreshButton from "./components/RefreshButton";
-import SlackConnectionIndicator from "./components/SlackConnectionIndicator";
-import ThemeToggle from "./components/ThemeToggle";
 import { getSlackBotStatus } from "@/lib/slackBot";
 import { getLifecycleAuditLog, describeAuditEntry, TRIGGER_LABEL } from "@/lib/historyView";
-import { logoutAction } from "./actions";
 
 // This page reads the local JSON store directly (not via fetch()), so
 // Next has no signal that it's dynamic and will statically pre-render it
@@ -33,7 +30,12 @@ function formatStorage(storage: { type?: string; sizeGb?: number; iops?: number 
 }
 
 export default async function DashboardPage() {
-  const [clusters, settings, auditLog] = await Promise.all([readClusters(), readSettings(), getLifecycleAuditLog()]);
+  const [clusters, settings, auditLog, history] = await Promise.all([
+    readClusters(),
+    readSettings(),
+    getLifecycleAuditLog(),
+    readHistory(),
+  ]);
   const now = Date.now();
 
   // Dates/times are intentionally passed as raw timestamps, not
@@ -92,38 +94,61 @@ export default async function DashboardPage() {
     description: describeAuditEntry(entry),
   }));
 
+  // Cost readings over time, for the daily-spend chart. History snapshots are
+  // only appended when a tracked field changes, so the newest stored reading
+  // can lag the live one - each cluster's current record is appended as a
+  // final reading (at its own asOf, not `now`, since that's when the figure
+  // was actually measured). Bucketing into days happens client-side, where
+  // the viewer's timezone is known.
+  const costSnapshots: CostSnapshot[] = [
+    ...history.map((snapshot) => ({
+      clusterId: snapshot.clusterId,
+      takenAtMs: new Date(snapshot.takenAt).getTime(),
+      amountUsd: snapshot.record.actualCost.amountUsd,
+    })),
+    ...clusters.map((c) => ({
+      clusterId: c.clusterId,
+      takenAtMs: new Date(c.actualCost.asOf ?? c.lastSyncedAt).getTime(),
+      amountUsd: c.actualCost.amountUsd,
+    })),
+  ];
+
+  // When each known cluster existed, for the cluster-count chart. Deleted
+  // clusters are removed from the live store, so history is the only record
+  // that they ever existed - and it carries the deletedAt that ends their
+  // lifetime. The live records are applied last since they're authoritative
+  // for anything still present.
+  const lifetimeById = new Map<string, ClusterLifetime>();
+  const latestSnapshotByCluster = new Map<string, (typeof history)[number]>();
+  for (const snapshot of history) {
+    const seen = latestSnapshotByCluster.get(snapshot.clusterId);
+    if (!seen || snapshot.takenAt > seen.takenAt) latestSnapshotByCluster.set(snapshot.clusterId, snapshot);
+  }
+  for (const snapshot of latestSnapshotByCluster.values()) {
+    lifetimeById.set(snapshot.clusterId, {
+      clusterId: snapshot.clusterId,
+      createdAtMs: new Date(snapshot.record.createdAt).getTime(),
+      deletedAtMs: snapshot.record.deletedAt ? new Date(snapshot.record.deletedAt).getTime() : null,
+    });
+  }
+  for (const c of clusters) {
+    lifetimeById.set(c.clusterId, {
+      clusterId: c.clusterId,
+      createdAtMs: new Date(c.createdAt).getTime(),
+      deletedAtMs: c.deletedAt ? new Date(c.deletedAt).getTime() : null,
+    });
+  }
+  const clusterLifetimes = [...lifetimeById.values()];
+
+  // All chrome (brand, nav, page header, logout) lives in DashboardTabs -
+  // the page title depends on which view is active, which is client state.
   return (
-    <main className="mx-auto w-full px-6 py-8 sm:w-[90%]">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-ink">
-            Capella <span className="text-brand">Housekeeper</span>
-          </h1>
-          <p className="text-sm text-ink-muted">
-            {rows.length} cluster{rows.length === 1 ? "" : "s"} across all configured organizations
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <SlackConnectionIndicator initialStatus={getSlackBotStatus()} />
-          <ThemeToggle />
-          <Link
-            href="/settings"
-            className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-panel-hover"
-          >
-            Settings
-          </Link>
-          <RefreshButton />
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-panel-hover"
-            >
-              Log out
-            </button>
-          </form>
-        </div>
-      </header>
-      <DashboardTabs clusterRows={rows} historyRows={historyRows} />
-    </main>
+    <DashboardTabs
+      clusterRows={rows}
+      historyRows={historyRows}
+      costSnapshots={costSnapshots}
+      clusterLifetimes={clusterLifetimes}
+      initialSlackStatus={getSlackBotStatus()}
+    />
   );
 }

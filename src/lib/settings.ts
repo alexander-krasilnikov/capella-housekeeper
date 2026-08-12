@@ -70,9 +70,10 @@ function isOrgConfigList(v: unknown): v is OrgConfig[] {
   if (!Array.isArray(v)) return false;
   return v.every((entry) => {
     if (typeof entry !== "object" || entry === null) return false;
-    const { orgId, orgName, apiKey } = entry as Record<string, unknown>;
+    const { orgId, orgName, projectSummary, apiKey } = entry as Record<string, unknown>;
     if (!isNonEmptyString(orgId) || !isNonEmptyString(apiKey)) return false;
     if (orgName !== undefined && typeof orgName !== "string") return false;
+    if (projectSummary !== undefined && typeof projectSummary !== "string") return false;
     return true;
   });
 }
@@ -144,7 +145,12 @@ export function validateSettings(input: unknown): Settings | null {
   return {
     activityGraceHours,
     forgottenHours,
-    capellaOrgs: capellaOrgs.map((o) => ({ orgId: o.orgId, orgName: o.orgName, apiKey: o.apiKey })),
+    capellaOrgs: capellaOrgs.map((o) => ({
+      orgId: o.orgId,
+      orgName: o.orgName,
+      projectSummary: o.projectSummary,
+      apiKey: o.apiKey,
+    })),
     capellaApiBaseUrl,
     syncIntervalHours,
     retentionDays,

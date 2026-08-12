@@ -34,7 +34,13 @@ const LABEL: Record<SlackBotStatus["status"], string> = {
 };
 
 /** Polls the in-process Socket Mode connection status - see src/lib/slackBot.ts getSlackBotStatus(). Not push-based; a 15s poll is plenty for a status LED nobody's staring at continuously. */
-export default function SlackConnectionIndicator({ initialStatus }: { initialStatus: SlackBotStatus }) {
+export default function SlackConnectionIndicator({
+  initialStatus,
+  collapsed = false,
+}: {
+  initialStatus: SlackBotStatus;
+  collapsed?: boolean;
+}) {
   const [status, setStatus] = useState(initialStatus);
   const [reconnecting, startReconnect] = useTransition();
 
@@ -49,10 +55,20 @@ export default function SlackConnectionIndicator({ initialStatus }: { initialSta
 
   const showReconnect = status.status !== "connected" && status.status !== "disabled";
 
+  if (collapsed) {
+    // No Reconnect action here - the dot's color still surfaces a problem,
+    // reconnecting just requires expanding the sidebar first.
+    return (
+      <div title={`${LABEL[status.status]}${status.detail ? ` - ${status.detail}` : ""}`} className="flex items-center justify-center p-2">
+        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${DOT_CLASS[status.status]}`} />
+      </div>
+    );
+  }
+
   return (
     <div
       title={status.detail}
-      className={`flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm ${TEXT_CLASS[status.status]}`}
+      className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs ${TEXT_CLASS[status.status]}`}
     >
       <span className={`h-2 w-2 shrink-0 rounded-full ${DOT_CLASS[status.status]}`} />
       {LABEL[status.status]}

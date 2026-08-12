@@ -21,6 +21,7 @@ import SendConsentRequestButton from "./SendConsentRequestButton";
 import ManualTurnOffButton from "./ManualTurnOffButton";
 import ManualDeleteButton from "./ManualDeleteButton";
 import ClusterHistoryButton from "./ClusterHistoryButton";
+import RefreshButton from "./RefreshButton";
 import FormattedDateTime, { formatDateTime } from "./FormattedDateTime";
 import type { AgeStatus, ConsentActionOutcome, ConsentStatus } from "@/types";
 
@@ -101,7 +102,7 @@ const DETAIL_GROUP_BY_COLUMN_ID: Record<string, DetailGroup> = {
   status: "Cluster",
   ageStatus: "Cluster",
   consent: "Workflow",
-  action: "Cluster",
+  action: "Workflow",
 };
 
 const ACTUAL_COST_UNAVAILABLE_LABEL: Record<"credits-based" | "no-access" | "error", string> = {
@@ -491,13 +492,13 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
           onChange={(e) => setGlobalFilter(e.target.value)}
           placeholder="Search clusters…"
           aria-label="Search clusters across all fields"
-          className="w-full max-w-sm rounded-lg border border-line bg-panel px-3 py-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+          className="w-full max-w-sm rounded-lg border border-line bg-panel px-3 py-2 text-sm text-ink shadow-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
         />
 
         <div
           role="group"
           aria-label="Filter by age status"
-          className="flex items-center gap-1 rounded-lg border border-line bg-panel p-1"
+          className="flex items-center gap-1 rounded-lg border border-line bg-panel p-1 shadow-sm"
         >
           {(["All", ...AGE_STATUS_OPTIONS] as const).map((tier) => {
             const isActive = tier === "All" ? currentAgeStatusFilter === undefined : currentAgeStatusFilter === tier;
@@ -522,7 +523,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
           <button
             type="button"
             onClick={() => setColumnsPanelOpen((o) => !o)}
-            className="rounded-lg border border-line bg-panel px-3 py-2 text-sm text-ink transition hover:bg-panel-hover"
+            className="rounded-lg border border-line bg-panel px-3 py-2 text-sm text-ink shadow-sm transition hover:bg-panel-hover"
           >
             Columns
           </button>
@@ -568,6 +569,8 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
             </div>
           )}
         </div>
+
+        <RefreshButton />
       </div>
 
       {pageRows.length === 0 ? (
@@ -575,7 +578,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
           {globalFilter ? <>No clusters match &ldquo;{globalFilter}&rdquo;.</> : "No clusters match the current filters."}
         </p>
       ) : (
-        <div className="rounded-xl border border-line bg-panel">
+        <div className="overflow-hidden rounded-xl border border-line bg-panel shadow-sm">
           <table className="w-full table-fixed border-collapse text-xs lg:text-sm">
             <colgroup>
               {table.getHeaderGroups()[0].headers.map((header) => (

@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { fetchOrgNameAction, saveOrgsAction } from "../actions";
+import { fetchOrgNameAction, fetchOrgProjectSummaryAction, saveOrgsAction } from "../actions";
 import type { OrgConfig } from "@/types";
 
 interface Row {
   key: string;
   orgId: string;
   orgName: string;
+  projectSummary: string;
   apiKey: string;
   revealed: boolean;
 }
@@ -17,6 +18,7 @@ function toRows(orgs: OrgConfig[]): Row[] {
     key: `existing-${i}`,
     orgId: o.orgId,
     orgName: o.orgName ?? "",
+    projectSummary: o.projectSummary ?? "",
     apiKey: o.apiKey,
     revealed: false,
   }));
@@ -33,30 +35,40 @@ const gridInputClass =
 
 const DEBOUNCE_MS = 500;
 
+interface LookupState {
+  status: "idle" | "loading" | "ok" | "error";
+  value: string;
+  error?: string;
+}
+
 /**
- * The organization's name isn't something an operator types - it's fetched
- * live from the Capella API once an org ID and API key are both present
- * (the same lookup sync.ts does on every cycle; see its `getOrganization`
- * call), and is otherwise not knowable up front. `initialName` (from
- * settings' cached fallback) renders immediately so there's no flash of
- * "loading" for an org that's already configured, while a fresh lookup
- * runs in the background to catch a name change on Capella's side. A
- * hidden input re-submits whatever name is currently resolved, so saving
- * the form keeps that fallback cache up to date without the operator ever
- * editing it directly.
+ * Shared by every field that isn't something an operator types but is
+ * instead fetched live from the Capella API once an org ID and API key are
+ * both present (org name, and now project summary) - both follow the exact
+ * same shape: an `initialValue` cached fallback renders immediately so
+ * there's no loading flash for an org that's already configured, a fresh
+ * lookup runs in the background to catch a change on Capella's side, and a
+ * transient failure on that background check doesn't blank out a value
+ * that was working a moment ago (only an edit to orgId/apiKey does).
  */
-function OrgNameCell({ orgId, apiKey, initialName }: { orgId: string; apiKey: string; initialName: string }) {
-  const [state, setState] = useState<{ status: "idle" | "loading" | "ok" | "error"; name: string; error?: string }>(
-    () => ({ status: initialName ? "ok" : "idle", name: initialName }),
-  );
+function useDebouncedLookup(
+  orgId: string,
+  apiKey: string,
+  initialValue: string,
+  fetcher: (orgId: string, apiKey: string) => Promise<{ ok: boolean; value: string; error?: string }>,
+): LookupState {
+  const [state, setState] = useState<LookupState>(() => ({
+    status: initialValue ? "ok" : "idle",
+    value: initialValue,
+  }));
   const requestId = useRef(0);
   // True only for the very first effect run (component mount) - lets that
-  // run silently re-verify an already-known-good cached name in the
+  // run silently re-verify an already-known-good cached value in the
   // background (no loading flash, and a transient failure doesn't blank
-  // out a name that was working a moment ago). Any later run means the
+  // out a value that was working a moment ago). Any later run means the
   // operator actually edited orgId/apiKey, so it always shows a fresh
-  // loading/error state instead - a changed credential's old name is stale,
-  // not a safe fallback.
+  // loading/error state instead - a changed credential's old value is
+  // stale, not a safe fallback.
   const didMountRef = useRef(false);
 
   useEffect(() => {
@@ -73,28 +85,32 @@ function OrgNameCell({ orgId, apiKey, initialName }: { orgId: string; apiKey: st
     const thisRequest = ++requestId.current;
     if (!isInitialMount) setState((s) => ({ ...s, status: "loading" }));
     const timer = setTimeout(() => {
-      fetchOrgNameAction(trimmedOrgId, trimmedApiKey).then((r) => {
+      fetcher(trimmedOrgId, trimmedApiKey).then((r) => {
         // A newer keystroke may have started another request since this one
         // fired - ignore a stale response so it can't clobber a fresher result.
         if (thisRequest !== requestId.current) return;
         if (r.ok) {
-          setState({ status: "ok", name: r.name });
+          setState({ status: "ok", value: r.value });
         } else if (isInitialMount) {
-          setState((s) => (s.status === "ok" ? s : { status: "error", name: "", error: r.error }));
+          setState((s) => (s.status === "ok" ? s : { status: "error", value: "", error: r.error }));
         } else {
-          setState({ status: "error", name: "", error: r.error });
+          setState({ status: "error", value: "", error: r.error });
         }
       });
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [orgId, apiKey]);
+  }, [orgId, apiKey, fetcher]);
 
+  return state;
+}
+
+function LookupCell({ state, inputName }: { state: LookupState; inputName: string }) {
   return (
     <span className="flex items-center px-2 py-1.5">
-      <input type="hidden" name="orgName" value={state.name} />
+      <input type="hidden" name={inputName} value={state.value} />
       {state.status === "idle" && <span className="text-sm text-ink-faint">—</span>}
       {state.status === "loading" && <span className="text-sm text-ink-faint">Looking up…</span>}
-      {state.status === "ok" && <span className="text-sm font-medium text-ink">{state.name}</span>}
+      {state.status === "ok" && <span className="text-sm font-medium text-ink">{state.value}</span>}
       {state.status === "error" && (
         <span className="text-sm text-amber-600 dark:text-amber-400" title={state.error}>
           Couldn&rsquo;t verify
@@ -102,6 +118,40 @@ function OrgNameCell({ orgId, apiKey, initialName }: { orgId: string; apiKey: st
       )}
     </span>
   );
+}
+
+async function lookupOrgName(orgId: string, apiKey: string) {
+  const r = await fetchOrgNameAction(orgId, apiKey);
+  return { ok: r.ok, value: r.name, error: r.error };
+}
+
+async function lookupProjectSummary(orgId: string, apiKey: string) {
+  const r = await fetchOrgProjectSummaryAction(orgId, apiKey);
+  return { ok: r.ok, value: r.summary, error: r.error };
+}
+
+function OrgNameCell({ orgId, apiKey, initialName }: { orgId: string; apiKey: string; initialName: string }) {
+  const state = useDebouncedLookup(orgId, apiKey, initialName, lookupOrgName);
+  return <LookupCell state={state} inputName="orgName" />;
+}
+
+/**
+ * Capella API keys can be scoped to a whole org or to a single project, and
+ * nothing states which directly - `fetchOrgProjectSummaryAction` infers it
+ * from how many projects `listProjects` returns for the key (see its own
+ * comment), landing on either a single project's name or "All projects".
+ */
+function ProjectSummaryCell({
+  orgId,
+  apiKey,
+  initialSummary,
+}: {
+  orgId: string;
+  apiKey: string;
+  initialSummary: string;
+}) {
+  const state = useDebouncedLookup(orgId, apiKey, initialSummary, lookupProjectSummary);
+  return <LookupCell state={state} inputName="projectSummary" />;
 }
 
 export default function OrgsEditor({ initialOrgs }: { initialOrgs: OrgConfig[] }) {
@@ -118,7 +168,14 @@ export default function OrgsEditor({ initialOrgs }: { initialOrgs: OrgConfig[] }
   function addRow() {
     setRows((prev) => [
       ...prev,
-      { key: `new-${prev.length}-${crypto.randomUUID()}`, orgId: "", orgName: "", apiKey: "", revealed: true },
+      {
+        key: `new-${prev.length}-${crypto.randomUUID()}`,
+        orgId: "",
+        orgName: "",
+        projectSummary: "",
+        apiKey: "",
+        revealed: true,
+      },
     ]);
   }
 
@@ -136,6 +193,7 @@ export default function OrgsEditor({ initialOrgs }: { initialOrgs: OrgConfig[] }
             <thead>
               <tr className="bg-panel-hover text-left text-xs uppercase tracking-wide text-ink-muted">
                 <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">Project</th>
                 <th className="px-3 py-2">Organization ID</th>
                 <th className="px-3 py-2">API key</th>
                 <th className="px-3 py-2">
@@ -148,6 +206,13 @@ export default function OrgsEditor({ initialOrgs }: { initialOrgs: OrgConfig[] }
                 <tr key={row.key} className="group border-t border-line align-top transition hover:bg-panel-hover">
                   <td className="px-1">
                     <OrgNameCell orgId={row.orgId} apiKey={row.apiKey} initialName={row.orgName} />
+                  </td>
+                  <td className="px-1">
+                    <ProjectSummaryCell
+                      orgId={row.orgId}
+                      apiKey={row.apiKey}
+                      initialSummary={row.projectSummary}
+                    />
                   </td>
                   <td className="px-1">
                     <input
