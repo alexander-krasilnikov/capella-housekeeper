@@ -19,6 +19,7 @@ import {
 import { formatUsd } from "@/lib/format";
 import SendConsentRequestButton from "./SendConsentRequestButton";
 import ManualTurnOffButton from "./ManualTurnOffButton";
+import ManualTurnOnButton from "./ManualTurnOnButton";
 import ManualDeleteButton from "./ManualDeleteButton";
 import ClusterHistoryButton from "./ClusterHistoryButton";
 import RefreshButton from "./RefreshButton";
@@ -30,9 +31,11 @@ declare module "@tanstack/react-table" {
     widthPct: number;
   }
   interface TableMeta<TData> {
-    /** Ask-button result per cluster, keyed by clusterId - lifted out of SendConsentRequestButton so its message can render under the Consent badge instead of the Action cell that triggered it. */
-    askResults: Record<string, { ok: boolean; message: string } | null | undefined>;
-    setAskResult: (clusterId: string, result: { ok: boolean; message: string } | null) => void;
+    /** Most recent action result per cluster, keyed by clusterId - lifted out of every Action-column button (Ask/Turn off/Turn on/Delete) so a result or error message always renders in the Action cell's own footer, below the row of buttons, rather than inline in place of whichever button produced it. */
+    actionResults: Record<string, { ok: boolean; message: string } | null | undefined>;
+    setActionResult: (clusterId: string, result: { ok: boolean; message: string } | null) => void;
+    /** Developer-options toggle (see dashboard-settings) - whether the Action column's Turn on control is offered at all. */
+    developerTurnOnEnabled: boolean;
   }
 }
 
@@ -68,7 +71,6 @@ export interface ClusterRow {
   owner: string;
   configSummary: string;
   couchbaseVersion: string;
-  storageSummary: string;
   actualCost: number | null;
   actualCostAsOfMs: number | null;
   actualCostUnavailableReason: "credits-based" | "no-access" | "error" | null;
@@ -278,46 +280,92 @@ const columns = [
     id: "consent",
     header: "Consent",
     meta: { widthPct: 9 },
+    cell: (info) => <ConsentBadge status={info.getValue()} outcome={info.row.original.actionOutcome} />,
+  }),
+  columnHelper.display({
+    id: "action",
+    header: "Action",
+    meta: { widthPct: 15 },
+    enableSorting: false,
     cell: (info) => {
-      const askResult = info.table.options.meta?.askResults[info.row.original.clusterId];
+      const clusterId = info.row.original.clusterId;
+      const actionResult = info.table.options.meta?.actionResults[clusterId];
+      const onResult = (result: { ok: boolean; message: string } | null) =>
+        info.table.options.meta?.setActionResult(clusterId, result);
       return (
         <span className="flex flex-col gap-1">
-          <ConsentBadge status={info.getValue()} outcome={info.row.original.actionOutcome} />
-          {askResult && (
+          <span className="flex flex-wrap items-center gap-1.5">
+            <SendConsentRequestButton
+              clusterId={clusterId}
+              disabled={!info.row.original.ownerEligibleForAsk}
+              onResult={onResult}
+            />
+            <ManualTurnOffButton
+              clusterId={clusterId}
+              clusterName={info.row.original.name}
+              disabled={info.row.original.statusIsOff}
+              onResult={onResult}
+            />
+            {info.table.options.meta?.developerTurnOnEnabled && (
+              <ManualTurnOnButton
+                clusterId={clusterId}
+                clusterName={info.row.original.name}
+                disabled={!info.row.original.statusIsOff}
+                onResult={onResult}
+              />
+            )}
+            <ManualDeleteButton clusterId={clusterId} clusterName={info.row.original.name} onResult={onResult} />
+            <ClusterHistoryButton clusterId={clusterId} clusterName={info.row.original.name} />
+          </span>
+          {actionResult && (
             <span
-              className={`break-words text-xs ${askResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
+              className={`break-words text-xs ${actionResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
             >
-              {askResult.message}
+              {actionResult.message}
             </span>
           )}
         </span>
       );
     },
   }),
-  columnHelper.display({
-    id: "action",
-    header: "Action",
-    meta: { widthPct: 13 },
-    enableSorting: false,
-    cell: (info) => (
-      <span className="flex flex-wrap items-center gap-1.5">
-        <SendConsentRequestButton
-          clusterId={info.row.original.clusterId}
-          disabled={!info.row.original.ownerEligibleForAsk}
-          onResult={(result) => info.table.options.meta?.setAskResult(info.row.original.clusterId, result)}
-        />
-        <ManualTurnOffButton
-          clusterId={info.row.original.clusterId}
-          clusterName={info.row.original.name}
-          disabled={info.row.original.statusIsOff}
-        />
-        <ManualDeleteButton clusterId={info.row.original.clusterId} clusterName={info.row.original.name} />
-      </span>
-    ),
-  }),
 ];
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
+/**
+ * Columns shown before an operator customizes anything - a lean, at-a-glance
+ * set (identity, activity, and status), with everything else (org/project
+ * scoping, raw dates, configuration detail, cost, and the Action buttons)
+ * available via the Columns panel or a row's detail panel rather than
+ * cluttering the default view.
+ */
+const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
+  org: false,
+  project: false,
+  createdAt: false,
+  age: false,
+  config: false,
+  actualCost: false,
+  action: false,
+};
+
+/** Left-to-right order matching the default visible set above; hidden columns trail in their original logical grouping. */
+const DEFAULT_COLUMN_ORDER = [
+  "expander",
+  "name",
+  "owner",
+  "lastActivity",
+  "status",
+  "ageStatus",
+  "consent",
+  "org",
+  "project",
+  "createdAt",
+  "age",
+  "config",
+  "actualCost",
+  "action",
+];
 
 const STORAGE_KEY = "capella-housekeeper:table-config:v1";
 
@@ -337,17 +385,23 @@ function loadPersistedConfig(): PersistedTableConfig {
   }
 }
 
-export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
+export default function ClusterTable({
+  rows,
+  developerTurnOnEnabled = false,
+}: {
+  rows: ClusterRow[];
+  developerTurnOnEnabled?: boolean;
+}) {
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [sorting, setSorting] = useState<SortingState>([{ id: "org", desc: false }]);
-  const [columnOrder, setColumnOrder] = useState<string[]>([]);
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [columnOrder, setColumnOrder] = useState<string[]>(DEFAULT_COLUMN_ORDER);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(DEFAULT_COLUMN_VISIBILITY);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [detailOpenIds, setDetailOpenIds] = useState<Set<string>>(new Set());
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
-  const [askResults, setAskResults] = useState<Record<string, { ok: boolean; message: string } | null>>({});
+  const [actionResults, setActionResults] = useState<Record<string, { ok: boolean; message: string } | null>>({});
 
   // Restore persisted column visibility/order/sort/page-size once on mount.
   // Reading localStorage during render would break server/client hydration,
@@ -402,8 +456,9 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
     onPaginationChange: setPagination,
     globalFilterFn: globalFuzzyFilter,
     meta: {
-      askResults,
-      setAskResult: (clusterId, result) => setAskResults((prev) => ({ ...prev, [clusterId]: result })),
+      actionResults,
+      setActionResult: (clusterId, result) => setActionResults((prev) => ({ ...prev, [clusterId]: result })),
+      developerTurnOnEnabled,
     },
     // Default true: TanStack resets the page index as a side effect of
     // computing the row model whenever the filtered set changes, which
@@ -617,7 +672,7 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                               onClick={() => toggleDetail(row.original.clusterId)}
                               aria-label="Toggle cluster details"
                               aria-expanded={detailOpenIds.has(row.original.clusterId)}
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-ink-faint transition hover:bg-panel-hover hover:text-brand"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-line text-ink-faint transition hover:border-brand hover:bg-panel-hover hover:text-brand"
                             >
                               <ChevronIcon
                                 className={`h-4 w-4 transition-transform duration-200 ${
@@ -708,24 +763,9 @@ export default function ClusterTable({ rows }: { rows: ClusterRow[] }) {
                                         </dd>
                                       </div>
                                       <div>
-                                        <dt className="text-ink-faint">Storage</dt>
-                                        <dd className="text-ink-muted">
-                                          {row.original.storageSummary}
-                                        </dd>
-                                      </div>
-                                      <div>
                                         <dt className="text-ink-faint">Last Synced</dt>
                                         <dd className="text-ink-muted">
                                           {formatDateTime(row.original.lastSyncedAtMs)}
-                                        </dd>
-                                      </div>
-                                      <div>
-                                        <dt className="text-ink-faint">History</dt>
-                                        <dd className="flex flex-wrap items-center gap-2">
-                                          <ClusterHistoryButton
-                                            clusterId={row.original.clusterId}
-                                            clusterName={row.original.name}
-                                          />
                                         </dd>
                                       </div>
                                     </>

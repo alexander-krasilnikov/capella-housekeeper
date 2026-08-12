@@ -2,7 +2,8 @@ import { turnOffCluster, deleteCluster, CapellaApiError } from "./capellaClient"
 import { readClusters, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
 import { computeRecordAgeStatus } from "./notifications";
-import type { ConsentActionOutcome } from "../types";
+import { updateMessage } from "./slack";
+import type { ClusterRecord, ConsentActionOutcome, Settings } from "../types";
 
 let started = false;
 
@@ -56,13 +57,40 @@ export interface ReconciliationResult {
  * elsewhere - by a sync cycle or a Slack click - during that window. Same
  * principle as sync.ts's guard around its own final upsertClusters call.
  */
-async function applyActionOutcome(clusterId: string, outcome: ConsentActionOutcome): Promise<void> {
+async function applyActionOutcome(clusterId: string, outcome: ConsentActionOutcome, settings: Settings): Promise<void> {
   const fresh = (await readClusters()).find((c) => c.clusterId === clusterId);
   if (!fresh) return;
   const prior = { ...fresh };
   fresh.actionOutcome = outcome;
   await upsertClusters([fresh]);
   await appendHistoryIfChanged(prior, fresh, "reconciliation", new Date().toISOString());
+  await notifyActionOutcome(fresh, outcome, settings);
+}
+
+/**
+ * Tells the cluster's owner what actually happened once an approved action
+ * resolves - performed, skipped (re-verification found it no longer
+ * warranted it), or failed (will retry) - regardless of whether the
+ * original decision was an owner's Slack click or a system-triggered auto
+ * turn-off. Edits the same live message in place, same as every other
+ * consent-lifecycle update, using whatever channel/message the record
+ * already has on file. Silently does nothing if there's no live message to
+ * update (already superseded by other activity) or Slack isn't configured -
+ * see "Owner is notified once an approved action resolves" in the
+ * cluster-lifecycle-actions spec.
+ */
+async function notifyActionOutcome(record: ClusterRecord, outcome: ConsentActionOutcome, settings: Settings): Promise<void> {
+  if (!record.slackChannelId || !record.slackMessageTs || !settings.slackBotToken) return;
+  const action = record.consentStatus === "approved-delete" ? "delete" : "turn off";
+  const text =
+    outcome === "performed"
+      ? `*${record.clusterName}*: Done - ${record.consentStatus === "approved-delete" ? "deleted" : "turned off"}.`
+      : outcome === "skipped"
+        ? `*${record.clusterName}*: No action taken - the cluster became active again before we acted.`
+        : `*${record.clusterName}*: Couldn't ${action} - will retry.`;
+  await updateMessage(settings.slackBotToken, record.slackChannelId, record.slackMessageTs, text).catch(
+    () => undefined,
+  );
 }
 
 /**
@@ -74,7 +102,13 @@ async function applyActionOutcome(clusterId: string, outcome: ConsentActionOutco
 export async function runReconciliationPass(): Promise<ReconciliationResult> {
   const [clusters, settings] = await Promise.all([readClusters(), readSettings()]);
   const nowMs = Date.now();
-  const orgsById = new Map(settings.capellaOrgs.map((org) => [org.orgId, org]));
+  // Keyed by orgConfigId (each capellaOrgs entry's own stable id), not
+  // orgId - orgId alone is ambiguous once more than one project-scoped API
+  // key shares a Capella org, and picking the wrong one 403s against
+  // Capella instead of acting on the cluster. orgsByOrgId is a fallback for
+  // records synced before orgConfigId existed.
+  const orgsByConfigId = new Map(settings.capellaOrgs.map((org) => [org.id, org]));
+  const orgsByOrgId = new Map(settings.capellaOrgs.map((org) => [org.orgId, org]));
 
   const result: ReconciliationResult = { performed: 0, skipped: 0, failed: 0 };
 
@@ -88,16 +122,17 @@ export async function runReconciliationPass(): Promise<ReconciliationResult> {
     const currentTier = computeRecordAgeStatus(record, settings, nowMs);
     if (currentTier !== record.consentTierAtDecision) {
       result.skipped += 1;
-      await applyActionOutcome(record.clusterId, "skipped");
+      await applyActionOutcome(record.clusterId, "skipped", settings);
       continue;
     }
 
-    const org = orgsById.get(record.orgId);
+    const org =
+      (record.orgConfigId ? orgsByConfigId.get(record.orgConfigId) : undefined) ?? orgsByOrgId.get(record.orgId);
     if (!org) {
       // Org removed from settings since consent was granted - nothing to
       // authenticate the write with, and it won't reappear on retry.
       result.failed += 1;
-      await applyActionOutcome(record.clusterId, "failed");
+      await applyActionOutcome(record.clusterId, "failed", settings);
       continue;
     }
 
@@ -108,11 +143,11 @@ export async function runReconciliationPass(): Promise<ReconciliationResult> {
         await deleteCluster(org, settings.capellaApiBaseUrl, record.projectId, record.clusterId);
       }
       result.performed += 1;
-      await applyActionOutcome(record.clusterId, "performed");
+      await applyActionOutcome(record.clusterId, "performed", settings);
     } catch (err) {
       if (!(err instanceof CapellaApiError)) throw err;
       result.failed += 1;
-      await applyActionOutcome(record.clusterId, "failed");
+      await applyActionOutcome(record.clusterId, "failed", settings);
     }
   }
 

@@ -1,8 +1,12 @@
-import Link from "next/link";
+import { cookies } from "next/headers";
 import { readSettings } from "@/lib/settings";
+import { getSlackBotStatus } from "@/lib/slackBot";
+import { SIDEBAR_COLLAPSED_COOKIE_NAME, parseSidebarCollapsed } from "@/lib/sidebarPreference";
 import { saveSettingsAction, saveCredentialsAction, rotateSessionSecretAction } from "../actions";
+import AppShell from "../components/AppShell";
 import OrgsEditor from "./OrgsEditor";
 import NotificationsEditor from "./NotificationsEditor";
+import SlackCredentialsEditor from "./SlackCredentialsEditor";
 import SettingsShell, { type SettingsSection } from "./SettingsShell";
 
 function NumberField({
@@ -69,7 +73,7 @@ function resolveInitialSection(params: {
   credSaved?: string;
   secretError?: string;
 }): string {
-  const SHARED_SECTION_IDS = ["thresholds", "sync", "notifications"];
+  const SHARED_SECTION_IDS = ["thresholds", "sync", "notifications", "slack-credentials", "developer"];
   if (params.section && SHARED_SECTION_IDS.includes(params.section)) return params.section;
   if (params.orgsError || params.orgsSaved) return "orgs";
   if (params.credError || params.credSaved) return "credentials";
@@ -91,7 +95,8 @@ export default async function SettingsPage({
     secretError?: string;
   }>;
 }) {
-  const [settings, params] = await Promise.all([readSettings(), searchParams]);
+  const [settings, params, cookieStore] = await Promise.all([readSettings(), searchParams, cookies()]);
+  const initialSidebarCollapsed = parseSidebarCollapsed(cookieStore.get(SIDEBAR_COLLAPSED_COOKIE_NAME)?.value);
   const sharedBanner = <Banner error={params.error} success={params.saved ? "Settings saved." : undefined} />;
 
   const sections: SettingsSection[] = [
@@ -180,13 +185,25 @@ export default async function SettingsPage({
           />
           {sharedBanner}
           <NotificationsEditor
-            slackBotToken={settings.slackBotToken}
-            slackAppToken={settings.slackAppToken}
             notificationsByTier={settings.notificationsByTier}
             consentReminderMax={settings.consentReminderMax}
             consentExpiryDays={settings.consentExpiryDays}
             snoozeDayOptions={settings.snoozeDayOptions}
           />
+        </div>
+      ),
+    },
+    {
+      id: "slack-credentials",
+      label: "Slack credentials",
+      content: (
+        <div>
+          <SectionHeader
+            title="Slack credentials"
+            description="Bot and app-level tokens used to send Slack DMs and receive button clicks."
+          />
+          {sharedBanner}
+          <SlackCredentialsEditor slackBotToken={settings.slackBotToken} slackAppToken={settings.slackAppToken} />
         </div>
       ),
     },
@@ -282,21 +299,61 @@ export default async function SettingsPage({
         </div>
       ),
     },
+    {
+      id: "developer",
+      label: "Developer options",
+      content: (
+        <div>
+          <SectionHeader
+            title="Developer options"
+            description="Settings intended only for use during the current test period, not permanent configuration."
+          />
+          {sharedBanner}
+          <form
+            action={saveSettingsAction}
+            className="flex flex-col gap-4 rounded-2xl border border-line bg-panel p-6"
+          >
+            <input type="hidden" name="section" value="developer" />
+            <label className="flex items-start gap-2.5 text-sm font-medium text-ink-muted">
+              <input
+                type="checkbox"
+                name="developerTurnOnEnabled"
+                defaultChecked={settings.developerTurnOnEnabled}
+                className="mt-0.5"
+              />
+              <span>
+                Enable manual cluster turn-on
+                <span className="mt-0.5 block text-xs font-normal text-ink-faint">
+                  Adds a "Turn on" control to the Action column for clusters that are turned off, reactivating them
+                  immediately and independent of owner consent. Off by default.
+                </span>
+              </span>
+            </label>
+            <button
+              type="submit"
+              className="mt-2 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-brand-ink transition hover:bg-brand-hover active:bg-brand-active"
+            >
+              Save
+            </button>
+          </form>
+        </div>
+      ),
+    },
   ];
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-6 py-8">
-      <header className="mb-6">
-        <Link href="/" className="text-sm text-ink-muted transition hover:text-brand">
-          ← Back to dashboard
-        </Link>
-        <h1 className="mt-2 text-xl font-semibold tracking-tight text-ink">Settings</h1>
-        <p className="mt-1 text-sm text-ink-muted">
+    <AppShell
+      activeNav="settings"
+      title="Settings"
+      initialSlackStatus={getSlackBotStatus()}
+      initialCollapsed={initialSidebarCollapsed}
+    >
+      <div className="mx-auto w-full max-w-5xl pt-2">
+        <p className="mb-6 text-sm text-ink-muted">
           Everything the dashboard needs to run, configurable from here - no environment variables required.
         </p>
-      </header>
-
-      <SettingsShell sections={sections} initialActiveId={resolveInitialSection(params)} />
-    </main>
+        <SettingsShell sections={sections} initialActiveId={resolveInitialSection(params)} />
+      </div>
+    </AppShell>
   );
 }

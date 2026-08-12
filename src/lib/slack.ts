@@ -101,21 +101,36 @@ function describeLastActivity(cluster: ClusterRecord, nowMs: number): string {
 
 /**
  * States what actually happens on no response, honestly but in one
- * sentence: reminders, then expiry, then - since nothing in this codebase
- * auto-turns-off or auto-deletes on expiry (only an explicit approval ever
- * reaches the reconciliation loop) - that no action is taken automatically.
- * For "Forgotten" specifically, appends one short clause noting the cluster
- * has already exceeded its configured grace period (the forgottenHours
+ * sentence: reminders, then expiry, then either auto turn-off (when the
+ * tier's autoTurnOffOnInaction and askTurnOff are both enabled and the
+ * cluster is currently running - see auto-turnoff-on-inaction spec) or, as
+ * before, that no action is taken automatically. When auto-turn-off is
+ * eligible, also states how many snoozes remain before it fires early. For
+ * "Forgotten" specifically, appends one short clause noting the cluster has
+ * already exceeded its configured grace period (the forgottenHours
  * threshold), so it'll keep resurfacing until it's acted on or shows
  * renewed activity.
  */
 function describeNoResponseConsequence(
   tier: AgeStatus,
+  cluster: Pick<ClusterRecord, "config" | "snoozeCount">,
+  tierConfig: TierNotificationConfig,
   settings: Pick<Settings, "forgottenHours" | "consentReminderMax" | "consentExpiryDays">,
 ): string {
-  const base = `Up to ${settings.consentReminderMax} reminder(s) over ${settings.consentExpiryDays} day(s), then it expires - *no automatic action* is taken.`;
+  const autoEligible = tierConfig.autoTurnOffOnInaction && tierConfig.askTurnOff && !isAlreadyOff(cluster.config.status);
+  const consequence = autoEligible
+    ? `*it will be turned off automatically*. You may still snooze up to ${Math.max(0, tierConfig.maxSnoozes - cluster.snoozeCount)} more time(s) before that happens`
+    : `*no automatic action* is taken`;
+  const base = `Up to ${settings.consentReminderMax} reminder(s) over ${settings.consentExpiryDays} day(s), then it expires - ${consequence}.`;
   if (tier !== "Forgotten") return base;
   return `${base} Already past the ${settings.forgottenHours}h Forgotten threshold, so expect it to keep resurfacing until it's handled.`;
+}
+
+/** Remaining-snooze count for the confirmation shown right after a successful snooze - shared with slackBot.ts so the same "N remaining" phrasing appears both here and in the initial consent message. */
+export function describeSnoozeAllowance(tierConfig: TierNotificationConfig, snoozeCountAfter: number): string | null {
+  if (!tierConfig.autoTurnOffOnInaction) return null;
+  const remaining = Math.max(0, tierConfig.maxSnoozes - snoozeCountAfter);
+  return `${remaining} snooze(s) remaining before automatic turn-off.`;
 }
 
 export interface ConsentMessageInput {
@@ -150,7 +165,7 @@ export function buildConsentMessage({ cluster, tier, tierConfig, isReminder, now
   const stateLine = describeCurrentState(cluster.config.status);
   const tierLine = describeTier(tier, ageHours, settings);
   const activityLine = describeLastActivity(cluster, nowMs);
-  const noResponseLine = describeNoResponseConsequence(tier, settings);
+  const noResponseLine = describeNoResponseConsequence(tier, cluster, tierConfig, settings);
 
   const offeredActions: ConsentAction[] = [
     ...(tierConfig.askTurnOff && !isAlreadyOff(cluster.config.status) ? (["turnoff"] as const) : []),

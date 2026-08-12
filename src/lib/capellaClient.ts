@@ -5,6 +5,15 @@ import type { OrgConfig } from "../types";
 const READ_TIMEOUT_MS = 90_000;
 const WRITE_TIMEOUT_MS = 120_000;
 
+/**
+ * Every request in this file only needs `orgId` (for the URL path) and
+ * `apiKey` (for the Authorization header) - narrower than the full
+ * `OrgConfig` so callers resolving credentials ad hoc (e.g. a settings-form
+ * lookup before a row has been saved) don't need to fabricate an `id` just
+ * to satisfy the type.
+ */
+type ApiCredential = Pick<OrgConfig, "orgId" | "apiKey">;
+
 export class CapellaApiError extends Error {
   constructor(
     message: string,
@@ -18,7 +27,7 @@ type CapellaMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 /** Rate-limited, timed, authenticated fetch shared by every request shape below - callers interpret the response. */
 async function doFetch(
-  org: OrgConfig,
+  org: ApiCredential,
   apiBaseUrl: string,
   pathSuffix: string,
   init?: { method?: CapellaMethod; body?: unknown },
@@ -44,8 +53,27 @@ async function doFetch(
   }
 }
 
+/**
+ * Capella's error responses are JSON with `code`/`message`/`hint` fields
+ * (e.g. `{"code":1002,"message":"Access Denied","hint":"..."}` for a 403) -
+ * surfaced here so a failure is actionable from the thrown message alone,
+ * rather than just a bare status code with no indication of *why*.
+ */
+async function describeErrorResponse(res: Response): Promise<string> {
+  const text = await res.text().catch(() => "");
+  if (!text) return "";
+  try {
+    const body = JSON.parse(text) as { code?: unknown; message?: unknown; hint?: unknown };
+    const parts = [body.message, body.hint].filter((v) => typeof v === "string" && v.length > 0);
+    if (parts.length > 0) return ` - ${parts.join("; ")}${body.code !== undefined ? ` (code ${body.code})` : ""}`;
+  } catch {
+    // Not JSON - fall through to the raw text preview below.
+  }
+  return ` - ${text.slice(0, 200)}`;
+}
+
 async function request<T>(
-  org: OrgConfig,
+  org: ApiCredential,
   apiBaseUrl: string,
   pathSuffix: string,
   init?: { method?: CapellaMethod; body?: unknown },
@@ -53,7 +81,7 @@ async function request<T>(
   const res = await doFetch(org, apiBaseUrl, pathSuffix, init);
   if (!res.ok) {
     throw new CapellaApiError(
-      `Capella API ${pathSuffix} returned ${res.status}`,
+      `Capella API ${pathSuffix} returned ${res.status}${await describeErrorResponse(res)}`,
       res.status,
     );
   }
@@ -73,15 +101,15 @@ async function request<T>(
 
 /** For write operations confirmed (per the official OpenAPI spec) to return no body - a 202/204 with nothing to parse as JSON. */
 async function requestNoContent(
-  org: OrgConfig,
+  org: ApiCredential,
   apiBaseUrl: string,
   pathSuffix: string,
-  init: { method: CapellaMethod },
+  init: { method: CapellaMethod; body?: unknown },
 ): Promise<void> {
   const res = await doFetch(org, apiBaseUrl, pathSuffix, init);
   if (!res.ok) {
     throw new CapellaApiError(
-      `Capella API ${pathSuffix} returned ${res.status}`,
+      `Capella API ${pathSuffix} returned ${res.status}${await describeErrorResponse(res)}`,
       res.status,
     );
   }
@@ -93,7 +121,7 @@ export interface CapellaOrganization {
 }
 
 /** Fetches the organization's real display name, confirmed to carry a `name` field. */
-export async function getOrganization(org: OrgConfig, apiBaseUrl: string): Promise<CapellaOrganization> {
+export async function getOrganization(org: ApiCredential, apiBaseUrl: string): Promise<CapellaOrganization> {
   return request<CapellaOrganization>(org, apiBaseUrl, `/organizations/${org.orgId}`);
 }
 
@@ -109,7 +137,7 @@ export interface CapellaUser {
  * if this fails, since the exact response shape wasn't confirmed against
  * real credentials at design time.
  */
-export async function getUser(org: OrgConfig, apiBaseUrl: string, userId: string): Promise<CapellaUser> {
+export async function getUser(org: ApiCredential, apiBaseUrl: string, userId: string): Promise<CapellaUser> {
   return request<CapellaUser>(org, apiBaseUrl, `/organizations/${org.orgId}/users/${userId}`);
 }
 
@@ -126,7 +154,6 @@ export interface CapellaClusterConfig {
   serviceGroups: Array<{
     node: {
       compute: { cpu: number; ram: number };
-      disk?: { type?: string; storage?: number; iops?: number };
     };
     numOfNodes: number;
   }>;
@@ -139,7 +166,7 @@ export interface CapellaClusterConfig {
   currentState: string;
 }
 
-export async function listProjects(org: OrgConfig, apiBaseUrl: string): Promise<CapellaProject[]> {
+export async function listProjects(org: ApiCredential, apiBaseUrl: string): Promise<CapellaProject[]> {
   const res = await request<{ data: CapellaProject[] }>(
     org,
     apiBaseUrl,
@@ -149,7 +176,7 @@ export async function listProjects(org: OrgConfig, apiBaseUrl: string): Promise<
 }
 
 export async function listClusters(
-  org: OrgConfig,
+  org: ApiCredential,
   apiBaseUrl: string,
   projectId: string,
 ): Promise<CapellaClusterConfig[]> {
@@ -179,7 +206,7 @@ export interface ActivityLogEvent {
  * cluster's entire history rather than just "activity today."
  */
 export async function getActivityLog(
-  org: OrgConfig,
+  org: ApiCredential,
   apiBaseUrl: string,
   clusterId: string,
 ): Promise<ActivityLogEvent[]> {
@@ -228,7 +255,7 @@ export type BillingResult =
  * incomplete or missing entirely.
  */
 export async function getBillingUsage(
-  org: OrgConfig,
+  org: ApiCredential,
   apiBaseUrl: string,
   projectId: string,
   clusterId: string,
@@ -264,7 +291,7 @@ export async function getBillingUsage(
  * `POST` to that same path turns it back on. Returns 202 with no body.
  */
 export async function turnOffCluster(
-  org: OrgConfig,
+  org: ApiCredential,
   apiBaseUrl: string,
   projectId: string,
   clusterId: string,
@@ -278,6 +305,30 @@ export async function turnOffCluster(
 }
 
 /**
+ * Turns a cluster back on - the same `activationState` sub-resource
+ * `turnOffCluster` `DELETE`s, `POST`ed instead. See manual-cluster-actions
+ * spec - gated behind the developer-options toggle. Confirmed via the
+ * official OpenAPI spec as `clusterOn`: unlike `clusterOff`, it defines an
+ * optional `{ turnOnLinkedAppService: boolean }` request body (default
+ * `false`) - sent explicitly here, matching the documented shape exactly,
+ * rather than relying on the body being truly optional in practice. Returns
+ * 202 with no body.
+ */
+export async function turnOnCluster(
+  org: ApiCredential,
+  apiBaseUrl: string,
+  projectId: string,
+  clusterId: string,
+): Promise<void> {
+  await requestNoContent(
+    org,
+    apiBaseUrl,
+    `/organizations/${org.orgId}/projects/${projectId}/clusters/${clusterId}/activationState`,
+    { method: "POST", body: { turnOnLinkedAppService: false } },
+  );
+}
+
+/**
  * Deletes a cluster outright. Confirmed via the official OpenAPI spec
  * (docs.couchbase.com/cloud/management-api-reference): DELETE against the
  * cluster resource itself. Returns 202 with no body; fails with 422 if the
@@ -285,7 +336,7 @@ export async function turnOffCluster(
  * not retried automatically here.
  */
 export async function deleteCluster(
-  org: OrgConfig,
+  org: ApiCredential,
   apiBaseUrl: string,
   projectId: string,
   clusterId: string,

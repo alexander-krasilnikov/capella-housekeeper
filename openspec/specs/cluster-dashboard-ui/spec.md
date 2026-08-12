@@ -87,7 +87,7 @@ The system SHALL let a user show or hide individual columns and change their lef
 - **THEN** the table's columns are rendered in the new order
 
 ### Requirement: Row detail expansion, including hidden columns' data
-The system SHALL let a user expand an individual cluster row to reveal additional detail not shown in the main columns (at minimum: cluster ID, organization ID, project ID, Couchbase version, and storage configuration), and SHALL also show the value of any column currently hidden from the table so hiding a column never makes its data inaccessible.
+The system SHALL let a user expand an individual cluster row to reveal additional detail not shown in the main columns (at minimum: cluster ID, organization ID, project ID, and Couchbase version), and SHALL also show the value of any column currently hidden from the table so hiding a column never makes its data inaccessible.
 
 #### Scenario: Expanding a cluster row
 - **WHEN** a user expands a cluster row
@@ -141,29 +141,60 @@ The system SHALL provide a row of quick-filter buttons - one for "All" plus one 
 - **WHEN** the quick-filter buttons are rendered
 - **THEN** exactly one of them (the selected tier, or "All") is visually distinguished as active
 
-### Requirement: Unified action column
-
-The system SHALL display a single "Action" column, positioned as the rightmost column in the main table, containing the Ask (manual consent request), Turn off, and Delete controls together for each cluster row. The Ask control SHALL NOT appear in the Consent column, and the Turn off and Delete controls SHALL NOT appear in the row-detail panel; all three are shown only in the Action column.
-
-#### Scenario: Action column shows all three controls
-
-- **WHEN** a cluster row is rendered
-- **THEN** its Ask, Turn off, and Delete controls all appear together in the rightmost "Action" column
-
-#### Scenario: Consent column no longer hosts a control
-
-- **WHEN** a cluster row is rendered
-- **THEN** the Consent column shows only the consent status badge, with no Ask control in it
-
-#### Scenario: Row-detail panel no longer hosts action controls
-
-- **WHEN** a cluster row is expanded
-- **THEN** the detail panel shows no Turn off or Delete control
-
 ### Requirement: Table matches full container width
 The system SHALL size the table to the full width of its available container at every viewport width, relying on the container's own padding (not a proportional inset) to keep the table from hugging the container's edges.
 
 #### Scenario: Table fills its container at any viewport width
 - **WHEN** the dashboard is viewed at any viewport width
 - **THEN** the table occupies the full width of its container, with spacing from the container's edges coming from the container's own padding rather than the table itself being narrower than its container
+
+### Requirement: Unified action column and result messaging
+
+The system SHALL display a single "Action" column, positioned as the rightmost column in the main table, containing the Ask (manual consent request), Turn off, Delete, and History controls together for each cluster row - plus, when the manual cluster turn-on developer-options toggle (see dashboard-settings) is enabled, a Turn on control alongside them - plus any result or error message produced by any of those controls. Each button's own result message SHALL NOT appear in place of that button; the Ask control and every action's result message SHALL NOT appear in the Consent column, and the Turn off, Turn on, Delete, and History controls SHALL NOT appear in the row-detail panel; all controls and the shared result message are shown only in the Action column (or, when that column is hidden, in the row-detail panel's "Workflow" group alongside it, per the hidden-column-data requirement above).
+
+#### Scenario: Action column shows all controls
+
+- **WHEN** a cluster row is rendered
+- **THEN** its Ask, Turn off, Delete, and History controls all appear together in the rightmost "Action" column, along with a Turn on control if the developer-options toggle is enabled
+
+#### Scenario: Turn-on control appears when the developer-options toggle is enabled
+
+- **WHEN** the manual cluster turn-on developer-options toggle is enabled and a cluster row is rendered
+- **THEN** a Turn on control appears in the Action column alongside the other controls
+
+#### Scenario: Turn-on control absent when the developer-options toggle is disabled
+
+- **WHEN** the manual cluster turn-on developer-options toggle is disabled (the default) and a cluster row is rendered
+- **THEN** no Turn on control appears anywhere in the row
+
+#### Scenario: A button's result message appears below the row of buttons, not in place of the button
+
+- **WHEN** a Turn off, Turn on, or Delete action completes (successfully or not)
+- **THEN** the button that triggered it remains in place, and the result or error message appears below the whole row of buttons rather than replacing that button
+
+#### Scenario: Consent column no longer hosts a control or message
+
+- **WHEN** a cluster row is rendered
+- **THEN** the Consent column shows only the consent status badge, with no Ask control and no Ask-result message in it
+
+#### Scenario: Ask result appears with the Action controls, not the Consent badge
+
+- **WHEN** a user clicks Ask and a result or error message is produced
+- **THEN** that message appears in the Action column's cell, below its row of buttons, not under the Consent badge
+
+#### Scenario: Row-detail panel no longer hosts action controls
+
+- **WHEN** a cluster row is expanded
+- **THEN** the detail panel shows no Ask, Turn off, Turn on, Delete, or History control while the Action column is visible
+
+### Requirement: Default column visibility favors a lean view
+The system SHALL show, before a user has customized column visibility, only the cluster name, owner, last activity, operational status, age status, and consent columns - leaving organization, project, creation date, age, configuration summary, actual cost, and the Action column hidden until explicitly shown.
+
+#### Scenario: First-time or reset visitor sees the lean default
+- **WHEN** a user views the table with no previously saved column configuration
+- **THEN** only the cluster name, owner, last activity, status, age status, and consent columns are visible, in that left-to-right order
+
+#### Scenario: A saved configuration overrides the default
+- **WHEN** a user has previously customized and saved column visibility
+- **THEN** the table shows that saved configuration instead of the default on later visits
 

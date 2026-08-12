@@ -36,6 +36,7 @@ function makeRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
     slackMessageTs: null,
     snoozeUntil: null,
     snoozeJustification: null,
+    snoozeCount: 0,
     ...overrides,
   };
 }
@@ -66,6 +67,12 @@ describe("computeFieldChanges", () => {
     const b = makeRecord({ consentStatus: "approved-turnoff" });
     const changes = computeFieldChanges(a, b);
     expect(changes).toEqual([{ field: "consentStatus", label: "Consent status", from: "pending", to: "approved-turnoff" }]);
+  });
+
+  it("describes a snooze-count change", () => {
+    const a = makeRecord({ snoozeCount: 1 });
+    const b = makeRecord({ snoozeCount: 2 });
+    expect(computeFieldChanges(a, b)).toEqual([{ field: "snoozeCount", label: "Snoozes used", from: "1", to: "2" }]);
   });
 
   it("reports every changed field when several differ at once", () => {

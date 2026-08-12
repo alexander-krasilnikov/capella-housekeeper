@@ -6,6 +6,8 @@ import type { OrgConfig } from "@/types";
 
 interface Row {
   key: string;
+  /** OrgConfig's own stable id - round-tripped via a hidden input so saving never mints a new one for an existing row. See OrgConfig.id's comment. */
+  id: string;
   orgId: string;
   orgName: string;
   projectSummary: string;
@@ -16,6 +18,7 @@ interface Row {
 function toRows(orgs: OrgConfig[]): Row[] {
   return orgs.map((o, i) => ({
     key: `existing-${i}`,
+    id: o.id,
     orgId: o.orgId,
     orgName: o.orgName ?? "",
     projectSummary: o.projectSummary ?? "",
@@ -170,6 +173,7 @@ export default function OrgsEditor({ initialOrgs }: { initialOrgs: OrgConfig[] }
       ...prev,
       {
         key: `new-${prev.length}-${crypto.randomUUID()}`,
+        id: crypto.randomUUID(),
         orgId: "",
         orgName: "",
         projectSummary: "",
@@ -205,6 +209,7 @@ export default function OrgsEditor({ initialOrgs }: { initialOrgs: OrgConfig[] }
               {rows.map((row) => (
                 <tr key={row.key} className="group border-t border-line align-top transition hover:bg-panel-hover">
                   <td className="px-1">
+                    <input type="hidden" name="orgConfigId" value={row.id} />
                     <OrgNameCell orgId={row.orgId} apiKey={row.apiKey} initialName={row.orgName} />
                   </td>
                   <td className="px-1">

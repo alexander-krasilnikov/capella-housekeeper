@@ -47,7 +47,7 @@ export default function ClusterHistoryButton({ clusterId, clusterName }: { clust
             aria-modal="true"
             aria-label={`History for ${clusterName}`}
             onClick={(e) => e.stopPropagation()}
-            className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-line bg-panel p-4 shadow-xl"
+            className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-panel p-4 shadow-xl"
           >
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold text-ink">History - {clusterName}</p>
@@ -66,30 +66,43 @@ export default function ClusterHistoryButton({ clusterId, clusterName }: { clust
                 <p className="text-sm text-ink-muted">No recorded history for this cluster yet.</p>
               )}
               {entries !== null && entries.length > 0 && (
-                <ol className="flex flex-col gap-3">
-                  {entries.map((entry, i) => (
-                    <li key={`${entry.takenAt}-${i}`} className="border-l-2 border-line pl-3">
-                      <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs text-ink-faint">
-                        <FormattedDateTime ms={new Date(entry.takenAt).getTime()} />
-                        <span>{TRIGGER_LABEL[entry.trigger] ?? entry.trigger}</span>
-                      </div>
-                      {entry.changes.length === 0 ? (
-                        <p className="mt-1 text-sm text-ink-muted">
-                          {i === 0 ? "First recorded state." : "No change recorded."}
-                        </p>
-                      ) : (
-                        <ul className="mt-1 flex flex-col gap-0.5 text-sm text-ink">
-                          {entry.changes.map((change) => (
-                            <li key={change.field}>
-                              <span className="text-ink-muted">{change.label}:</span> {change.from} →{" "}
-                              {change.to}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  ))}
-                </ol>
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-[11px] uppercase tracking-wide text-ink-faint">
+                      <th className="pb-2 pr-3 font-semibold">Date</th>
+                      <th className="pb-2 pr-3 font-semibold">Event</th>
+                      <th className="pb-2 font-semibold">Changes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Most recent first (see getClusterHistory) - the chronologically-first
+                        entry, always carrying an empty diff, is therefore the last row. */}
+                    {entries.map((entry, i) => (
+                      <tr key={`${entry.takenAt}-${i}`} className="border-t border-line align-top">
+                        <td className="whitespace-nowrap py-2 pr-3 text-xs text-ink-faint">
+                          <FormattedDateTime ms={new Date(entry.takenAt).getTime()} />
+                        </td>
+                        <td className="py-2 pr-3 text-ink-muted">{TRIGGER_LABEL[entry.trigger] ?? entry.trigger}</td>
+                        <td className="py-2 text-ink">
+                          {entry.changes.length === 0 ? (
+                            <span className="text-ink-muted">
+                              {i === entries.length - 1 ? "First recorded state." : "No change recorded."}
+                            </span>
+                          ) : (
+                            <ul className="flex flex-col gap-0.5">
+                              {entry.changes.map((change) => (
+                                <li key={change.field}>
+                                  <span className="text-ink-muted">{change.label}:</span> {change.from} →{" "}
+                                  {change.to}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>

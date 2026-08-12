@@ -11,10 +11,11 @@ import {
   SESSION_COOKIE_NAME,
 } from "@/lib/auth";
 import { THEME_COOKIE_NAME, type ThemeMode } from "@/lib/theme";
+import { SIDEBAR_COLLAPSED_COOKIE_NAME } from "@/lib/sidebarPreference";
 import { runSyncCycle } from "@/lib/sync";
 import { readSettings, writeSettings } from "@/lib/settings";
 import { sendManualConsentRequest, type ManualConsentResult } from "@/lib/notifications";
-import { manualTurnOff, manualDelete, type ManualActionResult } from "@/lib/manualActions";
+import { manualTurnOff, manualTurnOn, manualDelete, type ManualActionResult } from "@/lib/manualActions";
 import { testSlackConnection, type SlackConnectionTestResult } from "@/lib/slack";
 import { getOrganization, listProjects, CapellaApiError } from "@/lib/capellaClient";
 import { getSlackBotStatus, reconnectSlackBot, type SlackBotStatus } from "@/lib/slackBot";
@@ -67,6 +68,18 @@ export async function setThemeAction(mode: ThemeMode): Promise<void> {
   });
 }
 
+/** Persists the sidebar collapse/expand preference - see AppShell's `initialCollapsed` comment for why this is cookie-backed rather than localStorage. */
+export async function setSidebarCollapsedAction(collapsed: boolean): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.set(SIDEBAR_COLLAPSED_COOKIE_NAME, String(collapsed), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  });
+}
+
 export interface RefreshResult {
   ok: boolean;
   message: string;
@@ -111,6 +124,12 @@ export async function saveSettingsAction(formData: FormData): Promise<void> {
   const partial: Record<string, unknown> = {};
   for (const name of INT_SETTINGS_FIELDS) {
     if (formData.has(name)) partial[name] = Number.parseInt(String(formData.get(name)), 10);
+  }
+  // Checkboxes submit only when checked, so absence must be read explicitly
+  // as "off" rather than left out of `partial` - otherwise unchecking would
+  // never actually persist, since writeSettings merges onto current settings.
+  if (section === "developer") {
+    partial.developerTurnOnEnabled = formData.has("developerTurnOnEnabled");
   }
 
   const result = await writeSettings(partial);
@@ -172,6 +191,7 @@ export async function fetchOrgProjectSummaryAction(orgId: string, apiKey: string
 }
 
 export async function saveOrgsAction(formData: FormData): Promise<void> {
+  const orgConfigIds = formData.getAll("orgConfigId").map(String);
   const orgIds = formData.getAll("orgId").map(String);
   const orgNames = formData.getAll("orgName").map(String);
   const projectSummaries = formData.getAll("projectSummary").map(String);
@@ -179,6 +199,9 @@ export async function saveOrgsAction(formData: FormData): Promise<void> {
 
   const capellaOrgs: OrgConfig[] = orgIds
     .map((rawOrgId, i) => ({
+      // The client always sends a real id (OrgsEditor.tsx generates one for
+      // every row) - the fallback here only guards a hand-crafted request.
+      id: orgConfigIds[i]?.trim() || crypto.randomUUID(),
       orgId: rawOrgId.trim(),
       orgName: orgNames[i]?.trim() || undefined,
       projectSummary: projectSummaries[i]?.trim() || undefined,
@@ -248,13 +271,21 @@ export async function saveNotificationsAction(formData: FormData): Promise<void>
         notify: formData.has(`notify_${tier}`),
         askTurnOff: formData.has(`askTurnOff_${tier}`),
         askDelete: formData.has(`askDelete_${tier}`),
+        autoTurnOffOnInaction: formData.has(`autoTurnOffOnInaction_${tier}`),
+        // Disabled while its checkbox is unchecked (see NotificationsEditor),
+        // so a disabled field submits nothing - fall back to 3 (DEFAULT_SETTINGS'
+        // value) rather than treating a missing field as 0, since a value only
+        // matters once the toggle is on. Number.parseInt (not `||`) so an
+        // explicit 0 - "no snoozes tolerated" - isn't mistaken for "missing".
+        maxSnoozes: (() => {
+          const parsed = Number.parseInt(String(formData.get(`maxSnoozes_${tier}`) ?? ""), 10);
+          return Number.isNaN(parsed) ? 3 : parsed;
+        })(),
       },
     ]),
   ) as NotificationsByTier;
 
   const result = await writeSettings({
-    slackBotToken: String(formData.get("slackBotToken") ?? ""),
-    slackAppToken: String(formData.get("slackAppToken") ?? ""),
     notificationsByTier,
     consentReminderMax: Number.parseInt(String(formData.get("consentReminderMax")), 10),
     consentExpiryDays: Number.parseInt(String(formData.get("consentExpiryDays")), 10),
@@ -268,6 +299,41 @@ export async function saveNotificationsAction(formData: FormData): Promise<void>
   redirect("/settings?section=notifications&saved=1");
 }
 
+/**
+ * Owns just the two Slack tokens, separate from saveNotificationsAction -
+ * see separate-slack-credentials-form design.md. A blank submitted value
+ * means "leave unchanged" (omitted from the partial entirely, so
+ * writeSettings' merge-onto-current leaves it alone) unless its "Clear"
+ * flag is set, in which case it's written as "" explicitly - matching
+ * saveCredentialsAction's `newPassword || settings.dashboardPassword`
+ * shape for the equivalent password staleness problem.
+ */
+export async function saveSlackCredentialsAction(formData: FormData): Promise<void> {
+  const partial: Record<string, unknown> = {};
+
+  if (formData.get("clearSlackBotToken") === "1") {
+    partial.slackBotToken = "";
+  } else {
+    const botToken = String(formData.get("slackBotToken") ?? "").trim();
+    if (botToken) partial.slackBotToken = botToken;
+  }
+
+  if (formData.get("clearSlackAppToken") === "1") {
+    partial.slackAppToken = "";
+  } else {
+    const appToken = String(formData.get("slackAppToken") ?? "").trim();
+    if (appToken) partial.slackAppToken = appToken;
+  }
+
+  const result = await writeSettings(partial);
+  if (!result.ok) {
+    redirect(`/settings?section=slack-credentials&error=${encodeURIComponent(result.error)}`);
+  }
+
+  revalidatePath("/settings");
+  redirect("/settings?section=slack-credentials&saved=1");
+}
+
 /** Thin wrapper so the client component can call a proper Server Action - the real logic lives in src/lib/notifications.ts, shared with the automatic tier-transition path. */
 export async function sendConsentRequestAction(clusterId: string): Promise<ManualConsentResult> {
   const result = await sendManualConsentRequest(clusterId);
@@ -278,6 +344,13 @@ export async function sendConsentRequestAction(clusterId: string): Promise<Manua
 /** Thin wrapper so the client component can call a proper Server Action - the real logic lives in src/lib/manualActions.ts, deliberately independent of the owner-consent workflow (see manual-cluster-actions spec). */
 export async function manualTurnOffAction(clusterId: string): Promise<ManualActionResult> {
   const result = await manualTurnOff(clusterId);
+  if (result.ok) revalidatePath("/");
+  return result;
+}
+
+/** Thin wrapper, same shape as manualTurnOffAction above - only reachable while the developer-options "manual cluster turn-on" toggle is enabled. */
+export async function manualTurnOnAction(clusterId: string): Promise<ManualActionResult> {
+  const result = await manualTurnOn(clusterId);
   if (result.ok) revalidatePath("/");
   return result;
 }

@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { readClusters, readHistory } from "@/lib/store";
 import { readSettings } from "@/lib/settings";
 import type { CostSnapshot } from "@/lib/costSeries";
@@ -7,6 +8,7 @@ import { isAlreadyOff } from "@/lib/slack";
 import { isEmailLike } from "@/lib/notifications";
 import { ageDaysBetween, ageHoursBetween, formatAge } from "@/lib/format";
 import { computeAgeStatus } from "@/lib/ageStatus";
+import { SIDEBAR_COLLAPSED_COOKIE_NAME, parseSidebarCollapsed } from "@/lib/sidebarPreference";
 import { type ClusterRow } from "./components/ClusterTable";
 import { type HistoryRow } from "./components/HistoryTable";
 import DashboardTabs from "./components/DashboardTabs";
@@ -19,24 +21,16 @@ import { getLifecycleAuditLog, describeAuditEntry, TRIGGER_LABEL } from "@/lib/h
 // contained during `next build` instead of showing live data per request.
 export const dynamic = "force-dynamic";
 
-function formatStorage(storage: { type?: string; sizeGb?: number; iops?: number } | undefined): string {
-  if (!storage) return "—";
-  const parts = [
-    storage.sizeGb !== undefined ? `${storage.sizeGb} GB` : null,
-    storage.type ?? null,
-    storage.iops !== undefined ? `${storage.iops} IOPS` : null,
-  ].filter(Boolean);
-  return parts.length > 0 ? parts.join(", ") : "—";
-}
-
 export default async function DashboardPage() {
-  const [clusters, settings, auditLog, history] = await Promise.all([
+  const [clusters, settings, auditLog, history, cookieStore] = await Promise.all([
     readClusters(),
     readSettings(),
     getLifecycleAuditLog(),
     readHistory(),
+    cookies(),
   ]);
   const now = Date.now();
+  const initialSidebarCollapsed = parseSidebarCollapsed(cookieStore.get(SIDEBAR_COLLAPSED_COOKIE_NAME)?.value);
 
   // Dates/times are intentionally passed as raw timestamps, not
   // pre-formatted strings - formatting happens client-side in
@@ -60,7 +54,6 @@ export default async function DashboardPage() {
       owner: c.ownerDerived ?? "Unknown",
       configSummary: formatConfigSummary(c.config),
       couchbaseVersion: c.config.couchbaseVersion ?? "—",
-      storageSummary: formatStorage(c.config.nodeSpec.storage),
       actualCost: c.actualCost.amountUsd,
       actualCostAsOfMs: c.actualCost.asOf ? new Date(c.actualCost.asOf).getTime() : null,
       actualCostUnavailableReason: c.actualCost.unavailableReason ?? null,
@@ -149,6 +142,8 @@ export default async function DashboardPage() {
       costSnapshots={costSnapshots}
       clusterLifetimes={clusterLifetimes}
       initialSlackStatus={getSlackBotStatus()}
+      developerTurnOnEnabled={settings.developerTurnOnEnabled}
+      initialSidebarCollapsed={initialSidebarCollapsed}
     />
   );
 }

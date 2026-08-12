@@ -3,11 +3,19 @@
 import { useEffect, useState, useTransition } from "react";
 import { manualDeleteAction } from "../actions";
 
-export default function ManualDeleteButton({ clusterId, clusterName }: { clusterId: string; clusterName: string }) {
+export default function ManualDeleteButton({
+  clusterId,
+  clusterName,
+  onResult,
+}: {
+  clusterId: string;
+  clusterName: string;
+  /** Result is reported upward rather than replacing this button in place - see ClusterTable's Action cell, which renders it in one shared footer below the whole row of buttons. */
+  onResult: (result: { ok: boolean; message: string } | null) => void;
+}) {
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [typedName, setTypedName] = useState("");
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -17,16 +25,6 @@ export default function ManualDeleteButton({ clusterId, clusterName }: { cluster
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open]);
-
-  if (result) {
-    return (
-      <span
-        className={`text-xs ${result.ok ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
-      >
-        {result.message}
-      </span>
-    );
-  }
 
   return (
     <>
@@ -76,9 +74,10 @@ export default function ManualDeleteButton({ clusterId, clusterName }: { cluster
                 type="button"
                 disabled={pending || typedName !== clusterName}
                 onClick={() => {
+                  onResult(null);
                   startTransition(async () => {
                     const r = await manualDeleteAction(clusterId);
-                    setResult(r);
+                    onResult(r);
                     setOpen(false);
                   });
                 }}

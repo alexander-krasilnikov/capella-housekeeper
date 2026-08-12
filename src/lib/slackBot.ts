@@ -1,16 +1,18 @@
 import { App, SocketModeReceiver } from "@slack/bolt";
 import { readClusters, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
+import { applyAutoTurnOffDecision, canAutoTurnOff, computeRecordAgeStatus, resolveTierConfig } from "./notifications";
 import {
   buildSnoozeModalView,
   CONSENT_ACTION_IDS,
+  describeSnoozeAllowance,
   parseSnoozeSubmission,
   slackErrorReason,
   SNOOZE_MODAL_CALLBACK_ID,
   updateMessage,
   type ConsentAction,
 } from "./slack";
-import type { ConsentStatus } from "../types";
+import type { AgeStatus, ClusterRecord, ConsentStatus, Settings } from "../types";
 
 let started = false;
 let reconnectInFlight: Promise<void> | null = null;
@@ -119,30 +121,57 @@ async function handleSnoozeSubmission(
   messageTs: string,
   days: number,
   justification: string,
-  botToken: string,
+  settings: Settings,
 ): Promise<void> {
   const clusters = await readClusters();
   const record = clusters.find((c) => c.clusterId === clusterId);
   if (!record || record.consentStatus !== "pending") return;
 
   const prior = { ...record };
-  const snoozeUntilMs = Date.now() + days * DAY_MS;
+  const nowMs = Date.now();
+  const snoozeUntilMs = nowMs + days * DAY_MS;
   record.consentStatus = "snoozed";
   record.snoozeUntil = new Date(snoozeUntilMs).toISOString();
   record.snoozeJustification = justification;
+  record.snoozeCount += 1;
   await upsertClusters([record]);
   await appendHistoryIfChanged(prior, record, "slack-decision", new Date().toISOString());
 
   if (channelId && messageTs) {
     const until = new Date(snoozeUntilMs).toISOString().slice(0, 10);
     const reasonNote = ` Reason given: ${justification}`;
+    const tier = computeRecordAgeStatus(record, settings, nowMs);
+    const tierConfig = resolveTierConfig(tier, settings);
+    const allowanceNote = describeSnoozeAllowance(tierConfig, record.snoozeCount);
+    const allowanceLine = allowanceNote ? ` ${allowanceNote}` : "";
     await updateMessage(
-      botToken,
+      settings.slackBotToken,
       channelId,
       messageTs,
-      `*${record.clusterName}*: Snoozed until ${until}.${reasonNote}`,
+      `*${record.clusterName}*: Snoozed until ${until}.${reasonNote}${allowanceLine}`,
     ).catch(() => undefined);
   }
+}
+
+/**
+ * Refuses a snooze attempt that would exceed the tier's configured
+ * maxSnoozes and applies the same automatic-turnoff decision as an
+ * expiry (see notifications.ts's applyAutoTurnOffDecision) - tagged with
+ * a distinct trigger since, unlike the expiry case, this happens at an
+ * isolated moment (a button click) rather than inside the periodic sync
+ * batch. See "Exhausting the snooze cap triggers the same automatic
+ * outcome as expiry" in the auto-turnoff-on-inaction spec.
+ */
+async function handleSnoozeCapExceeded(
+  record: ClusterRecord,
+  tier: AgeStatus,
+  maxSnoozes: number,
+  settings: Settings,
+): Promise<void> {
+  const prior = { ...record };
+  await applyAutoTurnOffDecision(record, tier, settings, `the maximum of ${maxSnoozes} snooze(s) was reached`);
+  await upsertClusters([record]);
+  await appendHistoryIfChanged(prior, record, "auto-turnoff-decision", new Date().toISOString());
 }
 
 /**
@@ -284,7 +313,34 @@ async function connectSocketMode(botToken: string, appToken: string): Promise<vo
       const clusters = await readClusters();
       const record = clusters.find((c) => c.clusterId === clusterId);
       if (!record || record.consentStatus !== "pending") return;
-      const { snoozeDayOptions } = await readSettings();
+      const settings = await readSettings();
+
+      // Cap enforcement happens here, before the modal ever opens - see
+      // "Snooze cap enforcement point" in design.md: refusing up front is
+      // more honest than accepting a justification for a snooze that was
+      // never going to happen. Falls through to a normal (uncapped) snooze
+      // if auto-turn-off can't actually fire for this tier right now (e.g.
+      // ask-to-turn-off is disabled, or the cluster is already off) - there's
+      // no automatic outcome to substitute, so refusing would just strand
+      // the request with no way forward.
+      const tier = computeRecordAgeStatus(record, settings, Date.now());
+      const tierConfig = resolveTierConfig(tier, settings);
+      const capExceeded = tierConfig.autoTurnOffOnInaction && record.snoozeCount >= tierConfig.maxSnoozes;
+      if (capExceeded && canAutoTurnOff(record, tierConfig) && settings.slackBotToken) {
+        await handleSnoozeCapExceeded(record, tier, tierConfig.maxSnoozes, settings);
+        if (channelId && userId) {
+          await client.chat
+            .postEphemeral({
+              channel: channelId,
+              user: userId,
+              text: `You've already used all ${tierConfig.maxSnoozes} allowed snooze(s) for *${record.clusterName}* - it's being turned off automatically instead.`,
+            })
+            .catch(() => undefined);
+        }
+        return;
+      }
+
+      const { snoozeDayOptions } = settings;
       await client.views.open({
         trigger_id: triggerId,
         view: buildSnoozeModalView(
@@ -333,7 +389,7 @@ async function connectSocketMode(botToken: string, appToken: string): Promise<vo
         submission.metadata.messageTs,
         submission.days,
         submission.justification,
-        currentSettings.slackBotToken,
+        currentSettings,
       );
     } catch (err) {
       const reason = slackErrorReason(err);

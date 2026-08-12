@@ -96,6 +96,13 @@ const HISTORY_FIELDS: HistoryFieldSpec[] = [
     differs: (a, b) => a.consentCycleStartedAt !== b.consentCycleStartedAt,
     describe: (r) => r.consentCycleStartedAt ?? "—",
   },
+  {
+    field: "snoozeCount",
+    label: "Snoozes used",
+    lifecycle: true,
+    differs: (a, b) => a.snoozeCount !== b.snoozeCount,
+    describe: (r) => String(r.snoozeCount),
+  },
 ];
 
 const LIFECYCLE_FIELD_NAMES = new Set(HISTORY_FIELDS.filter((f) => f.lifecycle).map((f) => f.field));
@@ -145,9 +152,11 @@ export const TRIGGER_LABEL: Record<HistoryTrigger, string> = {
   sync: "Sync",
   "manual-turn-off": "Manual turn-off",
   "manual-delete": "Manual delete",
+  "manual-turn-on": "Manual turn-on",
   "slack-decision": "Slack",
   "manual-consent-request": "Manual request",
   reconciliation: "Reconciliation",
+  "auto-turnoff-decision": "Auto turn-off (snooze limit)",
 };
 
 /** Same trigger, phrased to read naturally after an action - e.g. "Turned off - reconciliation". */
@@ -155,9 +164,11 @@ const TRIGGER_PHRASE: Record<HistoryTrigger, string> = {
   sync: "detected during sync",
   "manual-turn-off": "manual turn-off",
   "manual-delete": "manual delete",
+  "manual-turn-on": "manual turn-on",
   "slack-decision": "via Slack",
   "manual-consent-request": "manually sent",
   reconciliation: "reconciliation",
+  "auto-turnoff-decision": "snooze limit reached",
 };
 
 /**
@@ -196,7 +207,9 @@ export function describeAuditEntry(entry: AuditLogEntry): string {
       entry.consentStatus === "pending"
         ? "Notified owner"
         : entry.consentStatus === "approved-turnoff"
-          ? "Owner approved turn-off"
+          ? entry.trigger === "slack-decision"
+            ? "Owner approved turn-off"
+            : "Auto turn-off triggered"
           : entry.consentStatus === "approved-delete"
             ? "Owner approved delete"
             : entry.consentStatus === "snoozed"

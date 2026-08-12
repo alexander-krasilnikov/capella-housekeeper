@@ -19,11 +19,19 @@ export function isEmailLike(value: string | null): value is string {
  * so it needs *some* config to build a message from; defaulting to offering
  * both turn-off and delete gives the operator full manual control rather
  * than silently offering nothing. `notify` is irrelevant here - manual sends
- * always bypass it.
+ * always bypass it. autoTurnOffOnInaction is always false - "In Use" is
+ * never eligible for it regardless of any other setting (see
+ * auto-turnoff-on-inaction spec).
  */
-const IN_USE_MANUAL_TIER_CONFIG: TierNotificationConfig = { notify: false, askTurnOff: true, askDelete: true };
+const IN_USE_MANUAL_TIER_CONFIG: TierNotificationConfig = {
+  notify: false,
+  askTurnOff: true,
+  askDelete: true,
+  autoTurnOffOnInaction: false,
+  maxSnoozes: 0,
+};
 
-function resolveTierConfig(tier: AgeStatus, settings: Settings): TierNotificationConfig {
+export function resolveTierConfig(tier: AgeStatus, settings: Settings): TierNotificationConfig {
   return tier === "In Use" ? IN_USE_MANUAL_TIER_CONFIG : settings.notificationsByTier[tier];
 }
 
@@ -46,6 +54,40 @@ export async function supersedeLiveMessage(record: ClusterRecord, settings: Sett
   await updateMessage(settings.slackBotToken, record.slackChannelId, record.slackMessageTs, text).catch(
     () => undefined,
   );
+}
+
+/**
+ * Whether a tier's auto-turn-off-on-inaction may actually fire for this
+ * record right now - requires the tier's ask-to-turn-off to also be
+ * enabled (the system won't do automatically what the tier isn't even
+ * configured to ask a human for) and the cluster not already off (nothing
+ * to do). See auto-turnoff-on-inaction spec.
+ */
+export function canAutoTurnOff(record: ClusterRecord, tierConfig: TierNotificationConfig): boolean {
+  return tierConfig.autoTurnOffOnInaction && tierConfig.askTurnOff && !isAlreadyOff(record.config.status);
+}
+
+/**
+ * Records an automatic turn-off decision - the same field writes a Slack
+ * click would make (see slackBot.ts's handleConsentAction) - and edits the
+ * live message to explain why, in place. Shared by the expiry branch below
+ * and slackBot.ts's snooze-cap enforcement so both go through identical
+ * behavior; the reconciliation loop then re-verifies and acts on it exactly
+ * as it would an owner's own click, and reports back to the owner once it
+ * does (see cluster-lifecycle-actions spec). Callers are responsible for
+ * their own persistence (batched for the expiry branch, immediate for the
+ * snooze-cap handler) - this only mutates the in-memory record and messages
+ * Slack, matching this module's existing division of labor.
+ */
+export async function applyAutoTurnOffDecision(
+  record: ClusterRecord,
+  tier: AgeStatus,
+  settings: Settings,
+  reasonNote: string,
+): Promise<void> {
+  await supersedeLiveMessage(record, settings, `*${record.clusterName}*: Turned off automatically - ${reasonNote}.`);
+  record.consentStatus = "approved-turnoff";
+  record.consentTierAtDecision = tier;
 }
 
 /** Sends (or re-sends, as a reminder) a tier notification. Returns false without throwing on any skip/failure - owner unresolvable, tokens unset, or the Slack send itself failing are all "didn't send," not errors. */
@@ -101,6 +143,7 @@ export async function applyConsentNotifications(
       record.slackMessageTs = null;
       record.snoozeUntil = null;
       record.snoozeJustification = null;
+      record.snoozeCount = 0;
 
       if (tier !== "In Use" && settings.notificationsByTier[tier].notify) {
         const sent = await trySendNotification(record, tier, settings, false, nowMs);
@@ -119,6 +162,9 @@ export async function applyConsentNotifications(
       // Snooze ended with no tier change since - ask again from scratch,
       // same tier, rather than staying silent forever (only a tier
       // transition resets things above; this is the other reset trigger).
+      // Deliberately NOT resetting snoozeCount here (unlike remindersSent) -
+      // it must survive this resumption so a tier's configured maxSnoozes is
+      // enforced across the whole tier, not reset by every snooze ending.
       record.remindersSent = 0;
       record.consentTierAtDecision = null;
       record.actionOutcome = "none";
@@ -147,8 +193,13 @@ export async function applyConsentNotifications(
     const expiryMs = settings.consentExpiryDays * DAY_MS;
 
     if (ageMs >= expiryMs) {
-      record.consentStatus = "expired";
-      await supersedeLiveMessage(record, settings, `Request expired for *${record.clusterName}* - no response received.`);
+      const tierConfig = resolveTierConfig(tier, settings);
+      if (tier !== "In Use" && canAutoTurnOff(record, tierConfig)) {
+        await applyAutoTurnOffDecision(record, tier, settings, "no response was received within the configured window");
+      } else {
+        record.consentStatus = "expired";
+        await supersedeLiveMessage(record, settings, `Request expired for *${record.clusterName}* - no response received.`);
+      }
       continue;
     }
 
