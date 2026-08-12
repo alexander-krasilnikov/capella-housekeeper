@@ -123,6 +123,7 @@ export default function DashboardTabs({
   initialSlackStatus,
   developerTurnOnEnabled,
   initialSidebarCollapsed,
+  initialTab,
 }: {
   clusterRows: ClusterRow[];
   historyRows: HistoryRow[];
@@ -131,8 +132,10 @@ export default function DashboardTabs({
   initialSlackStatus: SlackBotStatus;
   developerTurnOnEnabled: boolean;
   initialSidebarCollapsed: boolean;
+  /** From the `?tab=history` link AppShell's History nav item falls back to when mounted outside the dashboard (e.g. navigating there from Settings) - lets that link actually land on History instead of always reopening on Clusters. */
+  initialTab: Tab;
 }) {
-  const [tab, setTab] = useState<Tab>("clusters");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [clusterCount, setClusterCount] = useState<DailyValue[] | null>(null);
   const [dailySpend, setDailySpend] = useState<DailyValue[] | null>(null);
 

@@ -21,16 +21,23 @@ import { getLifecycleAuditLog, describeAuditEntry, TRIGGER_LABEL } from "@/lib/h
 // contained during `next build` instead of showing live data per request.
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
-  const [clusters, settings, auditLog, history, cookieStore] = await Promise.all([
+export default async function DashboardPage({
+  searchParams,
+}: {
+  /** `?tab=history` - only meaningful as a one-time initial value, set by AppShell's History nav link when navigating in from outside the dashboard (e.g. Settings); in-dashboard tab switches are client-side state, not URL-driven. */
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const [clusters, settings, auditLog, history, cookieStore, resolvedSearchParams] = await Promise.all([
     readClusters(),
     readSettings(),
     getLifecycleAuditLog(),
     readHistory(),
     cookies(),
+    searchParams,
   ]);
   const now = Date.now();
   const initialSidebarCollapsed = parseSidebarCollapsed(cookieStore.get(SIDEBAR_COLLAPSED_COOKIE_NAME)?.value);
+  const initialTab = resolvedSearchParams.tab === "history" ? "history" : "clusters";
 
   // Dates/times are intentionally passed as raw timestamps, not
   // pre-formatted strings - formatting happens client-side in
@@ -144,6 +151,7 @@ export default async function DashboardPage() {
       initialSlackStatus={getSlackBotStatus()}
       developerTurnOnEnabled={settings.developerTurnOnEnabled}
       initialSidebarCollapsed={initialSidebarCollapsed}
+      initialTab={initialTab}
     />
   );
 }

@@ -1,8 +1,8 @@
 import { turnOffCluster, turnOnCluster, deleteCluster, CapellaApiError } from "./capellaClient";
-import { readClusters, upsertClusters, removeClusters, appendHistoryIfChanged } from "./store";
+import { getCluster, upsertClusters, removeClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
 import { supersedeLiveMessage } from "./notifications";
-import type { ClusterRecord, OrgConfig, Settings } from "../types";
+import type { ClusterRecord, HistoryTrigger, OrgConfig, Settings } from "../types";
 
 export interface ManualActionResult {
   ok: boolean;
@@ -17,110 +17,154 @@ export interface ManualActionResult {
  * acting on the cluster. Falls back to an `orgId` match for records synced
  * before `orgConfigId` existed; self-heals once the next sync repopulates
  * it, and is only ambiguous in that window if `orgId` genuinely has more
- * than one configured entry.
+ * than one configured entry. Returns `undefined` if the org has since been
+ * removed from Settings entirely - shared by manualActions' own resolution
+ * below and reconciliation.ts's, so the two never resolve credentials
+ * differently for the same record.
  */
-export function resolveOrgConfig(record: ClusterRecord, settings: Settings): OrgConfig {
+export function resolveOrgConfig(record: ClusterRecord, settings: Settings): OrgConfig | undefined {
   return (
     settings.capellaOrgs.find((o) => o.id === record.orgConfigId) ??
-    settings.capellaOrgs.find((o) => o.orgId === record.orgId)!
+    settings.capellaOrgs.find((o) => o.orgId === record.orgId)
   );
 }
 
 async function resolveClusterAndOrg(
   clusterId: string,
 ): Promise<
-  | { ok: true; record: ClusterRecord; settings: Settings }
+  | { ok: true; record: ClusterRecord; settings: Settings; org: OrgConfig }
   | { ok: false; result: ManualActionResult }
 > {
-  const [clusters, settings] = await Promise.all([readClusters(), readSettings()]);
-  const record = clusters.find((c) => c.clusterId === clusterId);
+  const [record, settings] = await Promise.all([getCluster(clusterId), readSettings()]);
   if (!record) return { ok: false, result: { ok: false, message: "Cluster not found." } };
-  if (!settings.capellaOrgs.some((org) => org.orgId === record.orgId)) {
+  const org = resolveOrgConfig(record, settings);
+  if (!org) {
     return {
       ok: false,
       result: { ok: false, message: `${record.orgId} is no longer configured in Settings.` },
     };
   }
-  return { ok: true, record, settings };
+  return { ok: true, record, settings, org };
 }
 
+interface PowerDirectionConfig {
+  status: string;
+  /** Lowercase, for error text - "Couldn't turn on/off ...". */
+  verb: string;
+  /** Capitalized past tense, for success text - "Turned on/off ...". */
+  pastTense: string;
+  /** For the "Superseded by a manual ..." message sent to any live Slack request. */
+  supersedeNoun: string;
+  trigger: HistoryTrigger;
+  capellaCall: typeof turnOnCluster;
+  /**
+   * Whether a successful call resets the whole consent cycle, not just
+   * `config.status` - turning a cluster back on can otherwise leave a
+   * stale `approved-turnoff`/`approved-delete` decision in place, which the
+   * reconciliation loop would then re-verify against age/activity alone
+   * (it never looks at power state) and act on again, silently reversing
+   * the operator's own turn-on within one reconciliation pass. Turning off
+   * or deleting has no equivalent problem - re-doing an already-terminal
+   * action is harmless, and consent intent already agrees with the action.
+   */
+  resetConsentCycle: boolean;
+}
+
+const POWER_DIRECTIONS: Record<"on" | "off", PowerDirectionConfig> = {
+  off: {
+    status: "turnedOff",
+    verb: "turn off",
+    pastTense: "Turned off",
+    supersedeNoun: "turn-off",
+    trigger: "manual-turn-off",
+    capellaCall: turnOffCluster,
+    resetConsentCycle: false,
+  },
+  on: {
+    status: "healthy",
+    verb: "turn on",
+    pastTense: "Turned on",
+    supersedeNoun: "turn-on",
+    trigger: "manual-turn-on",
+    capellaCall: turnOnCluster,
+    resetConsentCycle: true,
+  },
+};
+
 /**
- * Turns a cluster off directly, immediately, independent of the
+ * Turns a cluster on or off directly, immediately, independent of the
  * owner-consent workflow - see the manual-cluster-actions spec. Re-reads
- * the record fresh before writing back its own field only, same
+ * the record fresh before writing back its own fields only, same
  * clobber-avoidance discipline as reconciliation.ts's applyActionOutcome,
- * since the Capella write below can take up to 120s.
+ * since the Capella write below can take up to 120s. Turning on is only
+ * reachable while the developer-options "manual cluster turn-on" toggle is
+ * enabled - enforced here (not just by the UI hiding the button) so the
+ * server action itself refuses the call regardless of caller.
  */
-export async function manualTurnOff(clusterId: string): Promise<ManualActionResult> {
+async function setClusterPower(clusterId: string, direction: "on" | "off"): Promise<ManualActionResult> {
   const resolved = await resolveClusterAndOrg(clusterId);
   if (!resolved.ok) return resolved.result;
-  const { record, settings } = resolved;
-  const org = resolveOrgConfig(record, settings);
+  const { record, settings, org } = resolved;
+  const config = POWER_DIRECTIONS[direction];
 
-  await supersedeLiveMessage(record, settings, `Superseded by a manual turn-off of *${record.clusterName}*.`);
+  if (direction === "on" && !settings.developerTurnOnEnabled) {
+    return { ok: false, message: "Manual cluster turn-on is disabled in Settings." };
+  }
+
+  await supersedeLiveMessage(
+    record,
+    settings,
+    `Superseded by a manual ${config.supersedeNoun} of *${record.clusterName}*.`,
+  );
 
   try {
-    await turnOffCluster(org, settings.capellaApiBaseUrl, record.projectId, clusterId);
+    await config.capellaCall(org, settings.capellaApiBaseUrl, record.projectId, clusterId);
   } catch (err) {
     if (!(err instanceof CapellaApiError)) throw err;
-    return { ok: false, message: `Couldn't turn off ${record.clusterName}: ${err.message}` };
+    return { ok: false, message: `Couldn't ${config.verb} ${record.clusterName}: ${err.message}` };
   }
 
-  const fresh = (await readClusters()).find((c) => c.clusterId === clusterId);
+  const fresh = await getCluster(clusterId);
   if (fresh) {
     const prior = { ...fresh };
-    fresh.config = { ...fresh.config, status: "turnedOff" };
+    fresh.config = { ...fresh.config, status: config.status };
+    if (config.resetConsentCycle) {
+      fresh.consentStatus = "none";
+      fresh.consentCycleStartedAt = null;
+      fresh.remindersSent = 0;
+      fresh.consentTierAtDecision = null;
+      fresh.actionOutcome = "none";
+      fresh.slackChannelId = null;
+      fresh.slackMessageTs = null;
+      fresh.snoozeUntil = null;
+      fresh.snoozeJustification = null;
+      fresh.snoozeCount = 0;
+    }
     await upsertClusters([fresh]);
-    await appendHistoryIfChanged(prior, fresh, "manual-turn-off", new Date().toISOString());
+    await appendHistoryIfChanged(prior, fresh, config.trigger, new Date().toISOString());
   }
 
-  return { ok: true, message: `Turned off ${record.clusterName}.` };
+  return { ok: true, message: `${config.pastTense} ${record.clusterName}.` };
 }
 
-/**
- * Turns a cluster back on directly, immediately, independent of the
- * owner-consent workflow - only reachable while the developer-options
- * "manual cluster turn-on" toggle is enabled (see manual-cluster-actions
- * spec); callers are responsible for that gate, same as the UI-level
- * disabled-when-inapplicable checks. Same re-read-fresh-before-writing and
- * supersede-live-message discipline as manualTurnOff above.
- */
+export async function manualTurnOff(clusterId: string): Promise<ManualActionResult> {
+  return setClusterPower(clusterId, "off");
+}
+
+/** Only reachable while the developer-options "manual cluster turn-on" toggle is enabled - see setClusterPower above. */
 export async function manualTurnOn(clusterId: string): Promise<ManualActionResult> {
-  const resolved = await resolveClusterAndOrg(clusterId);
-  if (!resolved.ok) return resolved.result;
-  const { record, settings } = resolved;
-  const org = resolveOrgConfig(record, settings);
-
-  await supersedeLiveMessage(record, settings, `Superseded by a manual turn-on of *${record.clusterName}*.`);
-
-  try {
-    await turnOnCluster(org, settings.capellaApiBaseUrl, record.projectId, clusterId);
-  } catch (err) {
-    if (!(err instanceof CapellaApiError)) throw err;
-    return { ok: false, message: `Couldn't turn on ${record.clusterName}: ${err.message}` };
-  }
-
-  const fresh = (await readClusters()).find((c) => c.clusterId === clusterId);
-  if (fresh) {
-    const prior = { ...fresh };
-    fresh.config = { ...fresh.config, status: "healthy" };
-    await upsertClusters([fresh]);
-    await appendHistoryIfChanged(prior, fresh, "manual-turn-on", new Date().toISOString());
-  }
-
-  return { ok: true, message: `Turned on ${record.clusterName}.` };
+  return setClusterPower(clusterId, "on");
 }
 
 /**
  * Deletes a cluster directly, immediately, independent of the
  * owner-consent workflow - see the manual-cluster-actions spec. Same
- * re-read-fresh-before-writing discipline as manualTurnOff above.
+ * re-read-fresh-before-writing discipline as setClusterPower above.
  */
 export async function manualDelete(clusterId: string): Promise<ManualActionResult> {
   const resolved = await resolveClusterAndOrg(clusterId);
   if (!resolved.ok) return resolved.result;
-  const { record, settings } = resolved;
-  const org = resolveOrgConfig(record, settings);
+  const { record, settings, org } = resolved;
 
   await supersedeLiveMessage(record, settings, `Superseded by a manual delete of *${record.clusterName}*.`);
 
@@ -131,7 +175,7 @@ export async function manualDelete(clusterId: string): Promise<ManualActionResul
     return { ok: false, message: `Couldn't delete ${record.clusterName}: ${err.message}` };
   }
 
-  const fresh = (await readClusters()).find((c) => c.clusterId === clusterId);
+  const fresh = await getCluster(clusterId);
   if (fresh) {
     const now = new Date().toISOString();
     const deleted = { ...fresh, deletedAt: now, lastSyncedAt: now };

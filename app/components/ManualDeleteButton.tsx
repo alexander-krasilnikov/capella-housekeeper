@@ -16,6 +16,13 @@ export default function ManualDeleteButton({
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [typedName, setTypedName] = useState("");
+  // Locks the trigger once a delete succeeds - unlike the turn-on/turn-off
+  // buttons there's no `disabled` prop reflecting fresh row state to release
+  // this on (a deleted cluster's row disappears once revalidatePath's data
+  // arrives), so this stays locked for the rest of this component's life,
+  // closing the window where a fast second click could re-open the dialog
+  // and fire a redundant delete before the row is gone.
+  const [justActed, setJustActed] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -30,8 +37,9 @@ export default function ManualDeleteButton({
     <>
       <button
         type="button"
+        disabled={justActed}
         onClick={() => setOpen(true)}
-        className="rounded-md border border-rose-300 px-2 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/40"
+        className="rounded-md border border-rose-300 px-2 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/40"
       >
         Delete
       </button>
@@ -79,6 +87,7 @@ export default function ManualDeleteButton({
                     const r = await manualDeleteAction(clusterId);
                     onResult(r);
                     setOpen(false);
+                    if (r.ok) setJustActed(true);
                   });
                 }}
                 className="rounded-md border border-rose-600 bg-rose-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-rose-700"

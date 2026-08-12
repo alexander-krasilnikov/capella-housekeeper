@@ -1,9 +1,10 @@
 import { App, SocketModeReceiver } from "@slack/bolt";
-import { readClusters, upsertClusters, appendHistoryIfChanged } from "./store";
+import { readClusters, getCluster, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
-import { applyAutoTurnOffDecision, canAutoTurnOff, computeRecordAgeStatus, resolveTierConfig } from "./notifications";
+import { applyAutoTurnOffDecision, computeRecordAgeStatus, resolveTierConfig } from "./notifications";
 import {
   buildSnoozeModalView,
+  canAutoTurnOff,
   CONSENT_ACTION_IDS,
   describeSnoozeAllowance,
   parseSnoozeSubmission,
@@ -168,10 +169,23 @@ async function handleSnoozeCapExceeded(
   maxSnoozes: number,
   settings: Settings,
 ): Promise<void> {
-  const prior = { ...record };
   await applyAutoTurnOffDecision(record, tier, settings, `the maximum of ${maxSnoozes} snooze(s) was reached`);
-  await upsertClusters([record]);
-  await appendHistoryIfChanged(prior, record, "auto-turnoff-decision", new Date().toISOString());
+
+  // Re-read fresh right before writing, applying only the two fields
+  // applyAutoTurnOffDecision just decided - not `record` from the top of
+  // the click handler. applyAutoTurnOffDecision just did a Slack round trip
+  // (supersedeLiveMessage's chat.update), plenty of time for a concurrent
+  // sync/reconciliation pass to have changed other fields on this same
+  // cluster; writing back the stale `record` would silently clobber those -
+  // same bug class as reconciliation.ts's applyActionOutcome and
+  // manualActions.ts, see their comments.
+  const fresh = await getCluster(record.clusterId);
+  if (!fresh) return;
+  const prior = { ...fresh };
+  fresh.consentStatus = record.consentStatus;
+  fresh.consentTierAtDecision = record.consentTierAtDecision;
+  await upsertClusters([fresh]);
+  await appendHistoryIfChanged(prior, fresh, "auto-turnoff-decision", new Date().toISOString());
 }
 
 /**

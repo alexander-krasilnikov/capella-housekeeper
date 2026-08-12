@@ -12,6 +12,13 @@ const inputClass =
  * holds - see separate-slack-credentials-form design.md Decision 3. A blank
  * visible field on its own means "leave unchanged", not "clear", so
  * clearing needs its own explicit, discoverable control.
+ *
+ * The field is controlled (`value`, not `defaultValue`) rather than driven
+ * by an imperative ref mutation - toggling `cleared` only changes what's
+ * *displayed* (`cleared ? "" : value`), never the `value` state itself, so
+ * a typed-but-unsaved edit survives a Clear-then-Undo instead of Clear
+ * discarding it immediately and Undo restoring the stale saved token in
+ * its place.
  */
 function MaskedTokenField({
   name,
@@ -26,27 +33,19 @@ function MaskedTokenField({
   hint: string;
   defaultValue: string;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
   const [revealed, setRevealed] = useState(defaultValue === "");
   const [cleared, setCleared] = useState(false);
-
-  function toggleClear() {
-    setCleared((prev) => {
-      const next = !prev;
-      if (inputRef.current) inputRef.current.value = next ? "" : defaultValue;
-      return next;
-    });
-  }
+  const [value, setValue] = useState(defaultValue);
 
   return (
     <label className="flex flex-col gap-1.5 text-sm font-medium text-ink-muted">
       {label}
       <div className="flex gap-1.5">
         <input
-          ref={inputRef}
           name={name}
           type={revealed ? "text" : "password"}
-          defaultValue={defaultValue}
+          value={cleared ? "" : value}
+          onChange={(e) => setValue(e.target.value)}
           disabled={cleared}
           className={inputClass}
           placeholder={label}
@@ -60,7 +59,7 @@ function MaskedTokenField({
         </button>
         <button
           type="button"
-          onClick={toggleClear}
+          onClick={() => setCleared((c) => !c)}
           className="shrink-0 rounded-lg border border-line px-2 text-xs text-ink-muted hover:bg-panel-hover"
         >
           {cleared ? "Undo" : "Clear"}

@@ -16,13 +16,13 @@ vi.mock("./capellaClient", () => ({
   },
 }));
 
-const { readClusters, upsertClusters, appendHistoryIfChanged } = vi.hoisted(() => ({
-  readClusters: vi.fn(),
+const { getCluster, upsertClusters, appendHistoryIfChanged } = vi.hoisted(() => ({
+  getCluster: vi.fn(),
   upsertClusters: vi.fn(async () => undefined),
   appendHistoryIfChanged: vi.fn(async () => undefined),
 }));
 vi.mock("./store", () => ({
-  readClusters,
+  getCluster,
   upsertClusters,
   removeClusters: vi.fn(async () => undefined),
   appendHistoryIfChanged,
@@ -79,6 +79,14 @@ describe("resolveOrgConfig", () => {
 
     expect(resolved).toBe(current);
   });
+
+  it("returns undefined when no configured entry matches by either orgConfigId or orgId", () => {
+    const settings = settingsWith([org({ id: "cfg-other", orgId: "org-2" })]);
+
+    const resolved = resolveOrgConfig(record({ orgId: "org-1", orgConfigId: "cfg-removed" }), settings);
+
+    expect(resolved).toBeUndefined();
+  });
 });
 
 function fullRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
@@ -124,6 +132,9 @@ function fullSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     capellaOrgs: [org()],
     capellaApiBaseUrl: "https://cloudapi.cloud.couchbase.com/v4",
+    // Every test in this suite exercises manualTurnOn actually running -
+    // the dedicated "developer toggle disabled" test below overrides this.
+    developerTurnOnEnabled: true,
     ...overrides,
   } as Settings;
 }
@@ -137,7 +148,7 @@ describe("manualTurnOn", () => {
     const settings = fullSettings();
     const off = fullRecord();
     readSettings.mockResolvedValue(settings);
-    readClusters.mockResolvedValue([off]);
+    getCluster.mockResolvedValue(off);
 
     const result = await manualTurnOn("cluster-1");
 
@@ -155,7 +166,7 @@ describe("manualTurnOn", () => {
 
   it("returns a not-found result for an unknown cluster, without calling the API", async () => {
     readSettings.mockResolvedValue(fullSettings());
-    readClusters.mockResolvedValue([]);
+    getCluster.mockResolvedValue(null);
 
     const result = await manualTurnOn("missing-cluster");
 
@@ -165,7 +176,7 @@ describe("manualTurnOn", () => {
 
   it("returns an error when the cluster's org is no longer configured, without calling the API", async () => {
     readSettings.mockResolvedValue(fullSettings({ capellaOrgs: [] }));
-    readClusters.mockResolvedValue([fullRecord()]);
+    getCluster.mockResolvedValue(fullRecord());
 
     const result = await manualTurnOn("cluster-1");
 
@@ -174,9 +185,19 @@ describe("manualTurnOn", () => {
     expect(turnOnCluster).not.toHaveBeenCalled();
   });
 
+  it("refuses to turn on while the developer toggle is disabled, without calling the API", async () => {
+    readSettings.mockResolvedValue(fullSettings({ developerTurnOnEnabled: false }));
+    getCluster.mockResolvedValue(fullRecord());
+
+    const result = await manualTurnOn("cluster-1");
+
+    expect(result).toEqual({ ok: false, message: "Manual cluster turn-on is disabled in Settings." });
+    expect(turnOnCluster).not.toHaveBeenCalled();
+  });
+
   it("surfaces a Capella API failure without writing back cluster state", async () => {
     readSettings.mockResolvedValue(fullSettings());
-    readClusters.mockResolvedValue([fullRecord()]);
+    getCluster.mockResolvedValue(fullRecord());
     turnOnCluster.mockRejectedValue(new CapellaApiError("service unavailable", 503));
 
     const result = await manualTurnOn("cluster-1");
@@ -189,10 +210,46 @@ describe("manualTurnOn", () => {
   it("supersedes a live pending consent message before turning the cluster on", async () => {
     const pending = fullRecord({ consentStatus: "pending", slackChannelId: "C1", slackMessageTs: "123" });
     readSettings.mockResolvedValue(fullSettings());
-    readClusters.mockResolvedValue([pending]);
+    getCluster.mockResolvedValue(pending);
 
     await manualTurnOn("cluster-1");
 
     expect(supersedeLiveMessage).toHaveBeenCalledWith(pending, fullSettings(), expect.stringContaining("Superseded"));
+  });
+
+  it("resets any pending/approved consent cycle, so reconciliation can't reverse the turn-on", async () => {
+    // Regression test: a stale "approved-turnoff" left in place after a
+    // manual turn-on used to survive untouched, and the reconciliation loop
+    // (which only re-checks age/activity tier, never power state) would act
+    // on it again a few minutes later - silently turning the cluster back
+    // off right after the operator turned it on.
+    const approved = fullRecord({
+      consentStatus: "approved-turnoff",
+      consentTierAtDecision: "Stale",
+      actionOutcome: "none",
+      slackChannelId: "C1",
+      slackMessageTs: "123",
+      snoozeCount: 2,
+    });
+    readSettings.mockResolvedValue(fullSettings());
+    getCluster.mockResolvedValue(approved);
+    turnOnCluster.mockResolvedValue(undefined);
+
+    await manualTurnOn("cluster-1");
+
+    expect(upsertClusters).toHaveBeenCalledWith([
+      expect.objectContaining({
+        consentStatus: "none",
+        consentCycleStartedAt: null,
+        remindersSent: 0,
+        consentTierAtDecision: null,
+        actionOutcome: "none",
+        slackChannelId: null,
+        slackMessageTs: null,
+        snoozeUntil: null,
+        snoozeJustification: null,
+        snoozeCount: 0,
+      }),
+    ]);
   });
 });

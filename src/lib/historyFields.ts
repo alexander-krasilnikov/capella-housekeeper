@@ -107,6 +107,20 @@ const HISTORY_FIELDS: HistoryFieldSpec[] = [
 
 const LIFECYCLE_FIELD_NAMES = new Set(HISTORY_FIELDS.filter((f) => f.lifecycle).map((f) => f.field));
 
+/**
+ * Triggers that are always a lifecycle event regardless of which field
+ * actually changed - a manual turn-on/turn-off/delete only ever touches
+ * `config`/`deletedAt` (both `lifecycle: false`, since routine sync-detected
+ * changes to those same fields are noise), but an operator's own action is
+ * exactly what the cross-cluster Lifecycle History audit log exists to
+ * surface - see cluster-history-ui spec "Cross-cluster lifecycle audit log".
+ */
+const ALWAYS_LIFECYCLE_TRIGGERS: ReadonlySet<HistoryTrigger> = new Set([
+  "manual-turn-off",
+  "manual-turn-on",
+  "manual-delete",
+]);
+
 /** See cluster-sync spec "Cluster record persistence" - true iff any compared field differs. */
 export function historyEntriesDiffer(a: ClusterRecord, b: ClusterRecord): boolean {
   return HISTORY_FIELDS.some((spec) => spec.differs(a, b));
@@ -123,8 +137,9 @@ export function computeFieldChanges(prior: ClusterRecord | null, next: ClusterRe
   }));
 }
 
-/** See cluster-history-ui spec "Cross-cluster lifecycle audit log" / "Routine sync-detected changes excluded". */
-export function isLifecycleChange(changes: FieldChange[]): boolean {
+/** See cluster-history-ui spec "Cross-cluster lifecycle audit log" / "Routine sync-detected changes excluded". `trigger` is optional so existing (pre-trigger-awareness) callers keep working unchanged. */
+export function isLifecycleChange(changes: FieldChange[], trigger?: HistoryTrigger): boolean {
+  if (trigger && ALWAYS_LIFECYCLE_TRIGGERS.has(trigger)) return true;
   return changes.some((c) => LIFECYCLE_FIELD_NAMES.has(c.field));
 }
 

@@ -288,7 +288,7 @@ export default function AppShell({
             count={historyCount}
             collapsed={collapsed}
             onClick={onSelectTab ? () => onSelectTab("history") : undefined}
-            href={onSelectTab ? undefined : "/"}
+            href={onSelectTab ? undefined : "/?tab=history"}
           />
         </div>
 

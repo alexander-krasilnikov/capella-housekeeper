@@ -122,6 +122,13 @@ export async function readClusters(): Promise<ClusterRecord[]> {
   return rows.map(rowToClusterRecord);
 }
 
+/** Single-cluster indexed lookup (`clusterId` is the table's primary key) - use this instead of `(await readClusters()).find(...)` wherever only one record is needed, e.g. a re-read-fresh-before-write. */
+export async function getCluster(clusterId: string): Promise<ClusterRecord | null> {
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM clusters WHERE clusterId = ?").get(clusterId) as ClusterRow | undefined;
+  return row ? rowToClusterRecord(row) : null;
+}
+
 /** Non-transactional single-row upsert - the primitive `upsertClusters` builds on. */
 function upsertClusterRow(db: Db, record: ClusterRecord): void {
   db.prepare(CLUSTER_INSERT_SQL).run(clusterRecordToRow(record) as Record<string, string | number | null>);
@@ -172,7 +179,10 @@ function insertHistoryRow(db: Db, snapshot: ClusterSnapshot): void {
   let lifecycle = snapshot.isLifecycleChange;
   if (lifecycle === undefined) {
     const prior = previousHistoryRow(db, snapshot.clusterId, takenAtMs);
-    lifecycle = isLifecycleChange(computeFieldChanges(prior ? rowToClusterRecord(prior) : null, snapshot.record));
+    lifecycle = isLifecycleChange(
+      computeFieldChanges(prior ? rowToClusterRecord(prior) : null, snapshot.record),
+      snapshot.trigger,
+    );
   }
   db.prepare(HISTORY_INSERT_SQL).run({
     takenAtMs,
@@ -213,7 +223,7 @@ export async function appendHistoryIfChanged(
   takenAt: string,
 ): Promise<void> {
   if (prior && !historyEntriesDiffer(prior, next)) return;
-  const lifecycle = isLifecycleChange(computeFieldChanges(prior, next));
+  const lifecycle = isLifecycleChange(computeFieldChanges(prior, next), trigger);
   await appendHistory([{ clusterId: next.clusterId, takenAt, record: next, trigger, isLifecycleChange: lifecycle }]);
 }
 

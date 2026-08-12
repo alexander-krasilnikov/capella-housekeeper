@@ -1,6 +1,6 @@
 import { ageHoursBetween } from "./format";
 import { computeAgeStatus } from "./ageStatus";
-import { buildConsentMessage, isAlreadyOff, sendConsentDM, updateMessage } from "./slack";
+import { buildConsentMessage, canAutoTurnOff, isAlreadyOff, sendConsentDM, updateMessage } from "./slack";
 import { readClusters, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
 import type { AgeStatus, ClusterRecord, Settings, TierNotificationConfig } from "../types";
@@ -54,17 +54,6 @@ export async function supersedeLiveMessage(record: ClusterRecord, settings: Sett
   await updateMessage(settings.slackBotToken, record.slackChannelId, record.slackMessageTs, text).catch(
     () => undefined,
   );
-}
-
-/**
- * Whether a tier's auto-turn-off-on-inaction may actually fire for this
- * record right now - requires the tier's ask-to-turn-off to also be
- * enabled (the system won't do automatically what the tier isn't even
- * configured to ask a human for) and the cluster not already off (nothing
- * to do). See auto-turnoff-on-inaction spec.
- */
-export function canAutoTurnOff(record: ClusterRecord, tierConfig: TierNotificationConfig): boolean {
-  return tierConfig.autoTurnOffOnInaction && tierConfig.askTurnOff && !isAlreadyOff(record.config.status);
 }
 
 /**

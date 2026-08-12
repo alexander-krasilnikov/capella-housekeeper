@@ -69,6 +69,20 @@ export function isAlreadyOff(rawStatus: string | null): boolean {
 }
 
 /**
+ * Whether a tier's auto-turn-off-on-inaction may actually fire for this
+ * record right now - requires the tier's ask-to-turn-off to also be
+ * enabled (the system won't do automatically what the tier isn't even
+ * configured to ask a human for) and the cluster not already off (nothing
+ * to do). See auto-turnoff-on-inaction spec. Lives here (not
+ * notifications.ts, which already imports isAlreadyOff from this module)
+ * so both notifications.ts and this file's own describeNoResponseConsequence
+ * below can share one definition without a circular import between them.
+ */
+export function canAutoTurnOff(record: Pick<ClusterRecord, "config">, tierConfig: TierNotificationConfig): boolean {
+  return tierConfig.autoTurnOffOnInaction && tierConfig.askTurnOff && !isAlreadyOff(record.config.status);
+}
+
+/**
  * One-line "label: value" statement of the cluster's *current operational
  * state* (running/turned off/deploying/...) - a different axis entirely
  * from the age-status tier below (a cluster can be "Forgotten" and still
@@ -117,7 +131,7 @@ function describeNoResponseConsequence(
   tierConfig: TierNotificationConfig,
   settings: Pick<Settings, "forgottenHours" | "consentReminderMax" | "consentExpiryDays">,
 ): string {
-  const autoEligible = tierConfig.autoTurnOffOnInaction && tierConfig.askTurnOff && !isAlreadyOff(cluster.config.status);
+  const autoEligible = canAutoTurnOff(cluster, tierConfig);
   const consequence = autoEligible
     ? `*it will be turned off automatically*. You may still snooze up to ${Math.max(0, tierConfig.maxSnoozes - cluster.snoozeCount)} more time(s) before that happens`
     : `*no automatic action* is taken`;

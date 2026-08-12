@@ -300,30 +300,29 @@ export async function saveNotificationsAction(formData: FormData): Promise<void>
 }
 
 /**
- * Owns just the two Slack tokens, separate from saveNotificationsAction -
- * see separate-slack-credentials-form design.md. A blank submitted value
- * means "leave unchanged" (omitted from the partial entirely, so
- * writeSettings' merge-onto-current leaves it alone) unless its "Clear"
- * flag is set, in which case it's written as "" explicitly - matching
- * saveCredentialsAction's `newPassword || settings.dashboardPassword`
- * shape for the equivalent password staleness problem.
+ * Resolves one of saveSlackCredentialsAction's clearable token fields - a
+ * blank submitted value means "leave unchanged" (`undefined`, so the caller
+ * omits it from the partial entirely and writeSettings' merge-onto-current
+ * leaves it alone) unless `clearFieldName`'s flag is set, in which case it
+ * resolves to "" explicitly - matching saveCredentialsAction's
+ * `newPassword || settings.dashboardPassword` shape for the equivalent
+ * password staleness problem.
  */
+function resolveClearableField(formData: FormData, fieldName: string, clearFieldName: string): string | undefined {
+  if (formData.get(clearFieldName) === "1") return "";
+  const value = String(formData.get(fieldName) ?? "").trim();
+  return value ? value : undefined;
+}
+
+/** Owns just the two Slack tokens, separate from saveNotificationsAction - see separate-slack-credentials-form design.md. */
 export async function saveSlackCredentialsAction(formData: FormData): Promise<void> {
   const partial: Record<string, unknown> = {};
 
-  if (formData.get("clearSlackBotToken") === "1") {
-    partial.slackBotToken = "";
-  } else {
-    const botToken = String(formData.get("slackBotToken") ?? "").trim();
-    if (botToken) partial.slackBotToken = botToken;
-  }
+  const botToken = resolveClearableField(formData, "slackBotToken", "clearSlackBotToken");
+  if (botToken !== undefined) partial.slackBotToken = botToken;
 
-  if (formData.get("clearSlackAppToken") === "1") {
-    partial.slackAppToken = "";
-  } else {
-    const appToken = String(formData.get("slackAppToken") ?? "").trim();
-    if (appToken) partial.slackAppToken = appToken;
-  }
+  const appToken = resolveClearableField(formData, "slackAppToken", "clearSlackAppToken");
+  if (appToken !== undefined) partial.slackAppToken = appToken;
 
   const result = await writeSettings(partial);
   if (!result.ok) {
