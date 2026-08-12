@@ -1,35 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
 import type { ClusterRecord, ClusterSnapshot } from "../types";
 
-// Keeps every read/write in-memory - store.ts's DATA_DIR is a fixed "./data"
-// with no override, so without this, these tests would read and write the
-// real data/history.json this repo ships with.
-const { mockFiles } = vi.hoisted(() => ({ mockFiles: new Map<string, string>() }));
+// Every test gets a fresh in-memory database - store.ts's getDb() is
+// overridden below to always return this test's instance, so tests never
+// touch the real ./data/store.sqlite3 this repo ships with (the same
+// isolation principle the old node:fs-mocking version had, just aimed at
+// the new backend - see design.md "Test impact").
+let db: DatabaseSync;
 
-vi.mock("node:fs", () => ({
-  promises: {
-    mkdir: vi.fn(async () => undefined),
-    readFile: vi.fn(async (path: string) => {
-      const data = mockFiles.get(path);
-      if (data === undefined) {
-        const err = new Error("ENOENT") as NodeJS.ErrnoException;
-        err.code = "ENOENT";
-        throw err;
-      }
-      return data;
-    }),
-    writeFile: vi.fn(async (path: string, data: string) => {
-      mockFiles.set(path, data);
-    }),
-    rename: vi.fn(async (from: string, to: string) => {
-      const data = mockFiles.get(from);
-      mockFiles.delete(from);
-      if (data !== undefined) mockFiles.set(to, data);
-    }),
-  },
-}));
+vi.mock("./db", async () => {
+  const actual = await vi.importActual<typeof import("./db")>("./db");
+  return { ...actual, getDb: () => db };
+});
 
 const { appendHistory, appendHistoryIfChanged, historyEntriesDiffer, readHistory } = await import("./store");
+const { bootstrapSchema } = await import("./db");
 
 function makeRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
   return {
@@ -65,12 +51,14 @@ function makeRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
     slackMessageTs: null,
     snoozeUntil: null,
     snoozeJustification: null,
+    snoozeCount: 0,
     ...overrides,
   };
 }
 
 beforeEach(() => {
-  mockFiles.clear();
+  db = new DatabaseSync(":memory:");
+  bootstrapSchema(db);
 });
 
 describe("historyEntriesDiffer", () => {
@@ -104,6 +92,12 @@ describe("historyEntriesDiffer", () => {
   it("detects a consent/lifecycle field change", () => {
     const a = makeRecord({ consentStatus: "pending" });
     const b = makeRecord({ consentStatus: "approved-turnoff" });
+    expect(historyEntriesDiffer(a, b)).toBe(true);
+  });
+
+  it("detects a snooze-count change", () => {
+    const a = makeRecord({ snoozeCount: 0 });
+    const b = makeRecord({ snoozeCount: 1 });
     expect(historyEntriesDiffer(a, b)).toBe(true);
   });
 
@@ -165,6 +159,68 @@ describe("readHistory", () => {
     await appendHistory([legacyEntry]);
     const history = await readHistory();
     expect(history[0].trigger).toBe("sync");
+  });
+});
+
+describe("write-time isLifecycleChange precomputation", () => {
+  it("stores isLifecycleChange = false for a diff touching only routine (config/cost) fields", async () => {
+    const prior = makeRecord();
+    const next = makeRecord({ config: { ...prior.config, nodeCount: prior.config.nodeCount + 1 } });
+
+    await appendHistoryIfChanged(prior, next, "sync", "2026-01-02T00:00:00.000Z");
+
+    const [entry] = await readHistory();
+    expect(entry.isLifecycleChange).toBe(false);
+  });
+
+  it("stores isLifecycleChange = true for a diff touching a consent/lifecycle field", async () => {
+    const prior = makeRecord({ consentStatus: "pending" });
+    const next = makeRecord({ consentStatus: "approved-turnoff" });
+
+    await appendHistoryIfChanged(prior, next, "slack-decision", "2026-01-02T00:00:00.000Z");
+
+    const [entry] = await readHistory();
+    expect(entry.isLifecycleChange).toBe(true);
+  });
+
+  it("computes isLifecycleChange from the immediately-preceding stored row when a caller doesn't supply it (e.g. a legacy/bare snapshot)", async () => {
+    await appendHistory([
+      { clusterId: "c1", takenAt: "2026-01-01T00:00:00.000Z", record: makeRecord({ consentStatus: "none" }), trigger: "sync" },
+    ]);
+    // No `isLifecycleChange` on this snapshot - appendHistory must fall back
+    // to diffing against the immediately-preceding stored row itself.
+    await appendHistory([
+      {
+        clusterId: "c1",
+        takenAt: "2026-01-02T00:00:00.000Z",
+        record: makeRecord({ consentStatus: "pending" }),
+        trigger: "sync",
+      },
+    ]);
+
+    const history = await readHistory();
+    expect(history.find((h) => h.takenAt === "2026-01-01T00:00:00.000Z")?.isLifecycleChange).toBe(false);
+    expect(history.find((h) => h.takenAt === "2026-01-02T00:00:00.000Z")?.isLifecycleChange).toBe(true);
+  });
+
+  it("classification is fixed at write time - reading it back never re-derives it from the current record", async () => {
+    // Simulates "the lifecycle-field rules changed after this entry was
+    // written": the stored flag disagrees with what re-diffing the record
+    // right now would produce. See the modified cluster-history-ui spec
+    // scenario "Classification rules changing later does not reclassify
+    // existing entries".
+    await appendHistory([
+      {
+        clusterId: "c1",
+        takenAt: "2026-01-01T00:00:00.000Z",
+        record: makeRecord({ consentStatus: "pending" }),
+        trigger: "sync",
+        isLifecycleChange: false,
+      },
+    ]);
+
+    const [entry] = await readHistory();
+    expect(entry.isLifecycleChange).toBe(false);
   });
 });
 

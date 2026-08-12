@@ -1,33 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
 import type { ClusterRecord, ClusterSnapshot } from "../types";
 
-const { mockFiles } = vi.hoisted(() => ({ mockFiles: new Map<string, string>() }));
+// Same in-memory-database pattern as store.test.ts/settings.test.ts.
+let db: DatabaseSync;
 
-vi.mock("node:fs", () => ({
-  promises: {
-    mkdir: vi.fn(async () => undefined),
-    readFile: vi.fn(async (path: string) => {
-      const data = mockFiles.get(path);
-      if (data === undefined) {
-        const err = new Error("ENOENT") as NodeJS.ErrnoException;
-        err.code = "ENOENT";
-        throw err;
-      }
-      return data;
-    }),
-    writeFile: vi.fn(async (path: string, data: string) => {
-      mockFiles.set(path, data);
-    }),
-    rename: vi.fn(async (from: string, to: string) => {
-      const data = mockFiles.get(from);
-      mockFiles.delete(from);
-      if (data !== undefined) mockFiles.set(to, data);
-    }),
-  },
-}));
+vi.mock("./db", async () => {
+  const actual = await vi.importActual<typeof import("./db")>("./db");
+  return { ...actual, getDb: () => db };
+});
 
 const { appendHistory } = await import("./store");
 const { describeAuditEntry, getClusterHistory, getLifecycleAuditLog } = await import("./historyView");
+const { bootstrapSchema } = await import("./db");
 
 function makeRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
   return {
@@ -63,6 +48,7 @@ function makeRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
     slackMessageTs: null,
     snoozeUntil: null,
     snoozeJustification: null,
+    snoozeCount: 0,
     ...overrides,
   };
 }
@@ -72,20 +58,22 @@ function snapshot(overrides: Partial<ClusterSnapshot> & { record: ClusterRecord 
 }
 
 beforeEach(() => {
-  mockFiles.clear();
+  db = new DatabaseSync(":memory:");
+  bootstrapSchema(db);
 });
 
 describe("getClusterHistory", () => {
-  it("returns entries oldest-first with an empty diff on the first entry", async () => {
+  it("returns entries most-recent-first, diffed in chronological order, with an empty diff on the oldest entry", async () => {
     await appendHistory([
       snapshot({ record: makeRecord({ consentStatus: "none" }), takenAt: "2026-01-02T00:00:00.000Z" }),
       snapshot({ record: makeRecord({ consentStatus: "pending" }), takenAt: "2026-01-01T00:00:00.000Z" }),
     ]);
     const entries = await getClusterHistory("c1");
     expect(entries).toHaveLength(2);
-    expect(entries[0].takenAt).toBe("2026-01-01T00:00:00.000Z");
-    expect(entries[0].changes).toEqual([]);
-    expect(entries[1].changes.map((c) => c.field)).toEqual(["consentStatus"]);
+    expect(entries[0].takenAt).toBe("2026-01-02T00:00:00.000Z");
+    expect(entries[0].changes.map((c) => c.field)).toEqual(["consentStatus"]);
+    expect(entries[1].takenAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(entries[1].changes).toEqual([]);
   });
 
   it("only returns entries for the requested cluster", async () => {
@@ -166,6 +154,39 @@ describe("describeAuditEntry", () => {
       }),
     );
     expect(text).toBe("Notified owner - detected during sync");
+  });
+
+  it("narrates an owner's own Slack approval distinctly from a system-triggered one", () => {
+    const text = describeAuditEntry(
+      makeAuditEntry({
+        trigger: "slack-decision",
+        consentStatus: "approved-turnoff",
+        changes: [{ field: "consentStatus", label: "Consent status", from: "pending", to: "approved-turnoff" }],
+      }),
+    );
+    expect(text).toBe("Owner approved turn-off - via Slack");
+  });
+
+  it("narrates an expiry-triggered auto turn-off (detected during the sync batch) distinctly from an owner's own approval", () => {
+    const text = describeAuditEntry(
+      makeAuditEntry({
+        trigger: "sync",
+        consentStatus: "approved-turnoff",
+        changes: [{ field: "consentStatus", label: "Consent status", from: "pending", to: "approved-turnoff" }],
+      }),
+    );
+    expect(text).toBe("Auto turn-off triggered - detected during sync");
+  });
+
+  it("narrates a snooze-cap-triggered auto turn-off with its own distinct trigger phrase", () => {
+    const text = describeAuditEntry(
+      makeAuditEntry({
+        trigger: "auto-turnoff-decision",
+        consentStatus: "approved-turnoff",
+        changes: [{ field: "consentStatus", label: "Consent status", from: "pending", to: "approved-turnoff" }],
+      }),
+    );
+    expect(text).toBe("Auto turn-off triggered - snooze limit reached");
   });
 
   it("narrates a reconciliation-performed turn-off using the record's current consentStatus, not the raw actionOutcome delta", () => {

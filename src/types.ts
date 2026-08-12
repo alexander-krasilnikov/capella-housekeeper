@@ -1,4 +1,12 @@
 export interface OrgConfig {
+  /**
+   * Stable identity for this specific credential entry, assigned once
+   * (generated client-side for a new row, or backfilled by settings.ts's
+   * migration for a pre-existing entry) and never changed thereafter - see
+   * ClusterRecord.orgConfigId for why this exists: `orgId` alone isn't
+   * unique when multiple project-scoped API keys share one Capella org.
+   */
+  id: string;
   orgId: string;
   /** Fallback label if the org name can't be fetched from the API (e.g. transient error). */
   orgName?: string;
@@ -11,11 +19,6 @@ export interface NodeSpec {
   compute: {
     cpu: number;
     ram: number;
-  };
-  storage?: {
-    type?: string;
-    sizeGb?: number;
-    iops?: number;
   };
 }
 
@@ -46,6 +49,15 @@ export interface ClusterRecord {
   clusterName: string;
   orgId: string;
   orgName: string;
+  /**
+   * Which of settings' (possibly several, same-`orgId`) `capellaOrgs`
+   * entries actually saw this cluster during sync - `orgId` alone is
+   * ambiguous once more than one project-scoped API key shares an org, so
+   * manual/reconciled actions must write back through this exact entry, not
+   * re-derive one by `orgId`. Absent (undefined) for records synced before
+   * this field existed; self-heals on the next sync cycle.
+   */
+  orgConfigId?: string;
   projectId: string;
   projectName: string;
 
@@ -89,6 +101,8 @@ export interface ClusterRecord {
   snoozeUntil: string | null;
   /** Optional free-text reason the owner gave when snoozing - persists (for visibility in the dashboard) until the next tier transition clears the whole consent cycle, not just until the snooze ends. */
   snoozeJustification: string | null;
+  /** Snoozes recorded since the last tier transition - deliberately survives a snoozed cycle resuming (unlike remindersSent), so a tier's configured maxSnoozes is enforced across the whole tier, not reset by every individual snooze ending. */
+  snoozeCount: number;
 }
 
 /** What caused a history entry to be written - narration-only, see cluster-sync spec "History entries are written at the moment a mutation occurs". */
@@ -98,7 +112,10 @@ export type HistoryTrigger =
   | "manual-delete"
   | "slack-decision"
   | "manual-consent-request"
-  | "reconciliation";
+  | "reconciliation"
+  | "manual-turn-on"
+  /** A snooze attempt was refused because the tier's configured maxSnoozes was already reached, and auto-turn-off fired immediately instead - see auto-turnoff-on-inaction design.md. The expiry-triggered case of the same auto-turn-off decision is tagged "sync" instead, since it's detected inside the regular sync-cycle batch rather than at an isolated moment like this one. */
+  | "auto-turnoff-decision";
 
 export interface ClusterSnapshot {
   clusterId: string;
@@ -106,6 +123,17 @@ export interface ClusterSnapshot {
   record: ClusterRecord;
   /** Absent (undefined) for entries written before this field existed - readHistory() defaults those to "sync", the only writer that existed at the time. */
   trigger?: HistoryTrigger;
+  /**
+   * Whether this entry counts as a consent/lifecycle change for the audit
+   * log - computed once, at write time, from the prior record the writer
+   * already has in hand (see historyFields.ts isLifecycleChange). Absent
+   * when the caller doesn't know the prior record; appendHistory() then
+   * falls back to computing it itself from the immediately-preceding stored
+   * row for the same cluster. See cluster-history-ui spec "Cross-cluster
+   * lifecycle audit log" for why this is fixed at write time rather than
+   * re-evaluated on every read.
+   */
+  isLifecycleChange?: boolean;
 }
 
 export interface StoreData {
@@ -119,6 +147,10 @@ export interface TierNotificationConfig {
   notify: boolean;
   askTurnOff: boolean;
   askDelete: boolean;
+  /** Turn the cluster off automatically - as if the owner had approved it - once a pending request expires with no response, or once the owner exhausts maxSnoozes. Only takes effect where askTurnOff is also true and the cluster isn't already off. */
+  autoTurnOffOnInaction: boolean;
+  /** Snoozes allowed before auto turn-off fires early, instead of waiting for expiry. Only enforced while autoTurnOffOnInaction is true. */
+  maxSnoozes: number;
 }
 
 /** "In Use" clusters are never notification-eligible - there's nothing to ask about a cluster with evidence of active use - so it's excluded from configuration entirely rather than merely defaulted off. */
@@ -151,12 +183,16 @@ export interface Settings {
   consentExpiryDays: number;
   /** Selectable snooze durations (in days) offered in the Slack "Snooze" modal - a non-empty list of distinct positive integers, ascending. */
   snoozeDayOptions: number[];
+  /** Developer-options toggle, off by default: whether a manual "Turn on" control is offered for clusters, for use only during the current test period - see manual-cluster-actions spec. */
+  developerTurnOnEnabled: boolean;
 }
 
 const DEFAULT_TIER_NOTIFICATION_CONFIG: TierNotificationConfig = {
   notify: false,
   askTurnOff: false,
   askDelete: false,
+  autoTurnOffOnInaction: false,
+  maxSnoozes: 3,
 };
 
 const DEFAULT_NOTIFICATIONS_BY_TIER: NotificationsByTier = {
@@ -184,4 +220,5 @@ export const DEFAULT_SETTINGS: Omit<Settings, "sessionSecret"> = {
   consentReminderMax: 2,
   consentExpiryDays: 7,
   snoozeDayOptions: [1, 2, 3],
+  developerTurnOnEnabled: false,
 };

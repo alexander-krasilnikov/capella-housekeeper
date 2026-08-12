@@ -1,100 +1,199 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import type { ClusterRecord, ClusterSnapshot, HistoryTrigger } from "../types";
-import { historyEntriesDiffer } from "./historyFields";
+import { computeFieldChanges, historyEntriesDiffer, isLifecycleChange } from "./historyFields";
+import { CLUSTER_RECORD_COLUMNS, fromEpochMs, fromSqliteBool, getDb, toEpochMs, toSqliteBool } from "./db";
 
 export { historyEntriesDiffer } from "./historyFields";
 
-const CLUSTERS_FILE = "clusters.json";
-const HISTORY_FILE = "history.json";
+/** A `clusters`/`history` row shaped exactly like the shared column list in db.ts - see design.md Decision 4. */
+type ClusterRow = Record<string, unknown>;
 
-/** Not a setting - see design.md in the eliminate-env-config change. */
-const DATA_DIR = "./data";
-
-function clustersPath(): string {
-  return path.join(DATA_DIR, CLUSTERS_FILE);
+/** `ClusterRecord` -> the flat, typed column values `db.ts`'s shared schema expects - see design.md Decisions 4-6. */
+export function clusterRecordToRow(record: ClusterRecord): ClusterRow {
+  return {
+    clusterId: record.clusterId,
+    clusterName: record.clusterName,
+    orgId: record.orgId,
+    orgName: record.orgName,
+    orgConfigId: record.orgConfigId ?? null,
+    projectId: record.projectId,
+    projectName: record.projectName,
+    cloudProvider: record.config.cloudProvider,
+    region: record.config.region,
+    couchbaseVersion: record.config.couchbaseVersion ?? null,
+    nodeCount: record.config.nodeCount,
+    nodeCpu: record.config.nodeSpec.compute.cpu,
+    nodeRam: record.config.nodeSpec.compute.ram,
+    status: record.config.status,
+    createdAtMs: toEpochMs(record.createdAt),
+    ownerDerived: record.ownerDerived,
+    lastActivityAtMs: toEpochMs(record.lastActivityAt),
+    lastActivitySource: record.lastActivitySource,
+    actualCostAmountUsd: record.actualCost.amountUsd,
+    actualCostAsOfMs: toEpochMs(record.actualCost.asOf),
+    actualCostUnavailableReason: record.actualCost.unavailableReason ?? null,
+    deletedAtMs: toEpochMs(record.deletedAt),
+    lastSyncedAtMs: toEpochMs(record.lastSyncedAt),
+    lastObservedFingerprint: record.lastObservedFingerprint,
+    lastNotifiedAgeStatus: record.lastNotifiedAgeStatus,
+    consentStatus: record.consentStatus,
+    consentCycleStartedAtMs: toEpochMs(record.consentCycleStartedAt),
+    remindersSent: record.remindersSent,
+    consentTierAtDecision: record.consentTierAtDecision,
+    actionOutcome: record.actionOutcome,
+    slackChannelId: record.slackChannelId,
+    slackMessageTs: record.slackMessageTs,
+    snoozeUntilMs: toEpochMs(record.snoozeUntil),
+    snoozeJustification: record.snoozeJustification,
+    snoozeCount: record.snoozeCount,
+  };
 }
 
-function historyPath(): string {
-  return path.join(DATA_DIR, HISTORY_FILE);
+/** The inverse of `clusterRecordToRow` - a `clusters`/`history` row back into a `ClusterRecord`. */
+export function rowToClusterRecord(row: ClusterRow): ClusterRecord {
+  return {
+    clusterId: row.clusterId as string,
+    clusterName: row.clusterName as string,
+    orgId: row.orgId as string,
+    orgName: row.orgName as string,
+    orgConfigId: (row.orgConfigId as string | null) ?? undefined,
+    projectId: row.projectId as string,
+    projectName: row.projectName as string,
+    config: {
+      cloudProvider: row.cloudProvider as string,
+      region: row.region as string,
+      couchbaseVersion: (row.couchbaseVersion as string | null) ?? undefined,
+      nodeCount: row.nodeCount as number,
+      nodeSpec: { compute: { cpu: row.nodeCpu as number, ram: row.nodeRam as number } },
+      status: row.status as string | null,
+    },
+    createdAt: fromEpochMs(row.createdAtMs as number) as string,
+    ownerDerived: row.ownerDerived as string | null,
+    lastActivityAt: fromEpochMs(row.lastActivityAtMs as number | null),
+    lastActivitySource: row.lastActivitySource as ClusterRecord["lastActivitySource"],
+    actualCost: {
+      amountUsd: row.actualCostAmountUsd as number | null,
+      asOf: fromEpochMs(row.actualCostAsOfMs as number | null),
+      unavailableReason: (row.actualCostUnavailableReason as ClusterRecord["actualCost"]["unavailableReason"] | null) ?? undefined,
+    },
+    deletedAt: fromEpochMs(row.deletedAtMs as number | null),
+    lastSyncedAt: fromEpochMs(row.lastSyncedAtMs as number) as string,
+    lastObservedFingerprint: row.lastObservedFingerprint as string,
+    lastNotifiedAgeStatus: row.lastNotifiedAgeStatus as ClusterRecord["lastNotifiedAgeStatus"],
+    consentStatus: row.consentStatus as ClusterRecord["consentStatus"],
+    consentCycleStartedAt: fromEpochMs(row.consentCycleStartedAtMs as number | null),
+    remindersSent: row.remindersSent as number,
+    consentTierAtDecision: row.consentTierAtDecision as ClusterRecord["consentTierAtDecision"],
+    actionOutcome: row.actionOutcome as ClusterRecord["actionOutcome"],
+    slackChannelId: row.slackChannelId as string | null,
+    slackMessageTs: row.slackMessageTs as string | null,
+    snoozeUntil: fromEpochMs(row.snoozeUntilMs as number | null),
+    snoozeJustification: row.snoozeJustification as string | null,
+    snoozeCount: row.snoozeCount as number,
+  };
 }
 
-async function ensureDataDir(): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+function historyRowToSnapshot(row: ClusterRow): ClusterSnapshot {
+  return {
+    clusterId: row.clusterId as string,
+    takenAt: fromEpochMs(row.takenAtMs as number) as string,
+    record: rowToClusterRecord(row),
+    trigger: row.trigger as HistoryTrigger,
+    isLifecycleChange: fromSqliteBool(row.isLifecycleChange as number),
+  };
 }
 
-async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
+const CLUSTER_INSERT_SQL = `
+  INSERT INTO clusters (${CLUSTER_RECORD_COLUMNS.join(", ")})
+  VALUES (${CLUSTER_RECORD_COLUMNS.map((c) => `@${c}`).join(", ")})
+  ON CONFLICT(clusterId) DO UPDATE SET
+    ${CLUSTER_RECORD_COLUMNS.filter((c) => c !== "clusterId").map((c) => `${c} = excluded.${c}`).join(", ")}
+`;
+
+const HISTORY_INSERT_SQL = `
+  INSERT INTO history (takenAtMs, trigger, isLifecycleChange, ${CLUSTER_RECORD_COLUMNS.join(", ")})
+  VALUES (@takenAtMs, @trigger, @isLifecycleChange, ${CLUSTER_RECORD_COLUMNS.map((c) => `@${c}`).join(", ")})
+`;
+
+type Db = ReturnType<typeof getDb>;
+
+export async function readClusters(): Promise<ClusterRecord[]> {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM clusters").all() as ClusterRow[];
+  return rows.map(rowToClusterRecord);
+}
+
+/** Non-transactional single-row upsert - the primitive `upsertClusters` builds on. */
+function upsertClusterRow(db: Db, record: ClusterRecord): void {
+  db.prepare(CLUSTER_INSERT_SQL).run(clusterRecordToRow(record) as Record<string, string | number | null>);
+}
+
+/** Merge one org/project sync pass into the flat cross-org collection - per-row upsert, never a whole-table rewrite (see design.md Decision 2). */
+export async function upsertClusters(records: ClusterRecord[]): Promise<void> {
+  if (records.length === 0) return;
+  const db = getDb();
+  db.exec("BEGIN");
   try {
-    const raw = await fs.readFile(filePath, "utf8");
-    return JSON.parse(raw) as T;
+    for (const record of records) upsertClusterRow(db, record);
+    db.exec("COMMIT");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return fallback;
-    }
+    db.exec("ROLLBACK");
     throw err;
   }
 }
 
-/** Write-then-rename so a crash mid-write never leaves a truncated/corrupt file. */
-async function writeJsonFileAtomic(filePath: string, data: unknown): Promise<void> {
-  await ensureDataDir();
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf8");
-  await fs.rename(tmpPath, filePath);
+/** Removes clusters from the live collection outright - used once a cluster's final state has been captured to history, rather than leaving a tombstone in place. */
+export async function removeClusters(clusterIds: string[]): Promise<void> {
+  if (clusterIds.length === 0) return;
+  const db = getDb();
+  const placeholders = clusterIds.map(() => "?").join(", ");
+  db.prepare(`DELETE FROM clusters WHERE clusterId IN (${placeholders})`).run(...clusterIds);
 }
 
-// A single in-process mutex is enough: this app runs as one always-on Node
-// process, so the only concurrent writers are within this same process.
-let writeQueue: Promise<unknown> = Promise.resolve();
-
-function serialize<T>(fn: () => Promise<T>): Promise<T> {
-  const result = writeQueue.then(fn, fn);
-  writeQueue = result.catch(() => undefined);
-  return result;
+/** The most recently recorded history row for a cluster, strictly before `beforeTakenAtMs` (or unconditionally if omitted) - used both for write-time lifecycle classification and for read-time diffing. */
+function previousHistoryRow(db: Db, clusterId: string, beforeTakenAtMs?: number): ClusterRow | undefined {
+  const sql =
+    beforeTakenAtMs === undefined
+      ? "SELECT * FROM history WHERE clusterId = ? ORDER BY takenAtMs DESC LIMIT 1"
+      : "SELECT * FROM history WHERE clusterId = ? AND takenAtMs < ? ORDER BY takenAtMs DESC LIMIT 1";
+  const params = beforeTakenAtMs === undefined ? [clusterId] : [clusterId, beforeTakenAtMs];
+  return db.prepare(sql).get(...params) as ClusterRow | undefined;
 }
 
-/** Fills in defaults for consent/notification fields absent on records written before this feature existed - see design.md Migration Plan. */
-function withConsentDefaults(record: ClusterRecord): ClusterRecord {
-  // The on-disk record may actually be missing these fields despite the
-  // static type claiming otherwise (older data pre-dates them) - read
-  // through a Partial view so the `??` fallbacks below are meaningful.
-  const partial = record as Partial<ClusterRecord>;
-  return {
-    ...record,
-    lastNotifiedAgeStatus: partial.lastNotifiedAgeStatus ?? null,
-    consentStatus: partial.consentStatus ?? "none",
-    consentCycleStartedAt: partial.consentCycleStartedAt ?? null,
-    remindersSent: partial.remindersSent ?? 0,
-    consentTierAtDecision: partial.consentTierAtDecision ?? null,
-    actionOutcome: partial.actionOutcome ?? "none",
-    slackChannelId: partial.slackChannelId ?? null,
-    slackMessageTs: partial.slackMessageTs ?? null,
-    snoozeUntil: partial.snoozeUntil ?? null,
-    snoozeJustification: partial.snoozeJustification ?? null,
-  };
+/**
+ * Non-transactional single-row insert - the primitive `appendHistory`
+ * builds on. A snapshot's `isLifecycleChange` is normally already computed
+ * by the caller (which has `prior` in hand - see `appendHistoryIfChanged`
+ * and sync.ts); when it's absent (a caller with no known prior, e.g. a
+ * legacy/test snapshot), it's computed here from the immediately-preceding
+ * stored row for the same cluster.
+ */
+function insertHistoryRow(db: Db, snapshot: ClusterSnapshot): void {
+  const takenAtMs = toEpochMs(snapshot.takenAt) as number;
+  let lifecycle = snapshot.isLifecycleChange;
+  if (lifecycle === undefined) {
+    const prior = previousHistoryRow(db, snapshot.clusterId, takenAtMs);
+    lifecycle = isLifecycleChange(computeFieldChanges(prior ? rowToClusterRecord(prior) : null, snapshot.record));
+  }
+  db.prepare(HISTORY_INSERT_SQL).run({
+    takenAtMs,
+    trigger: snapshot.trigger ?? "sync",
+    isLifecycleChange: toSqliteBool(lifecycle),
+    ...(clusterRecordToRow(snapshot.record) as Record<string, string | number | null>),
+  });
 }
 
-export async function readClusters(): Promise<ClusterRecord[]> {
-  const records = await readJsonFile<ClusterRecord[]>(clustersPath(), []);
-  return records.map(withConsentDefaults);
-}
-
-/** Entries written before `trigger` existed default to "sync" - the only writer that existed at the time. */
-function withHistoryTriggerDefault(snapshot: ClusterSnapshot): ClusterSnapshot {
-  return { ...snapshot, trigger: snapshot.trigger ?? "sync" };
-}
-
-export async function readHistory(): Promise<ClusterSnapshot[]> {
-  const snapshots = await readJsonFile<ClusterSnapshot[]>(historyPath(), []);
-  return snapshots.map(withHistoryTriggerDefault);
-}
-
+/** Appends history rows - one INSERT per snapshot, never a read-all-rewrite-all (see design.md Decisions 2 and 7). */
 export async function appendHistory(snapshots: ClusterSnapshot[]): Promise<void> {
   if (snapshots.length === 0) return;
-  return serialize(async () => {
-    const existing = await readJsonFile<ClusterSnapshot[]>(historyPath(), []);
-    await writeJsonFileAtomic(historyPath(), [...existing, ...snapshots]);
-  });
+  const db = getDb();
+  db.exec("BEGIN");
+  try {
+    for (const snapshot of snapshots) insertHistoryRow(db, snapshot);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 /**
@@ -103,6 +202,9 @@ export async function appendHistory(snapshots: ClusterSnapshot[]): Promise<void>
  * combined `appendHistory` call - see sync.ts). `prior` is the live record
  * as it was immediately before this mutation; `null` means "not previously
  * known" and always appends, same as a newly-discovered cluster during sync.
+ * Computes `isLifecycleChange` here, at write time, from the `prior`/`next`
+ * already in hand - see cluster-history-ui spec "Cross-cluster lifecycle
+ * audit log".
  */
 export async function appendHistoryIfChanged(
   prior: ClusterRecord | null,
@@ -111,57 +213,49 @@ export async function appendHistoryIfChanged(
   takenAt: string,
 ): Promise<void> {
   if (prior && !historyEntriesDiffer(prior, next)) return;
-  await appendHistory([{ clusterId: next.clusterId, takenAt, record: next, trigger }]);
+  const lifecycle = isLifecycleChange(computeFieldChanges(prior, next));
+  await appendHistory([{ clusterId: next.clusterId, takenAt, record: next, trigger, isLifecycleChange: lifecycle }]);
 }
 
-/** Merge one org/project sync pass into the flat cross-org collection. */
-export async function upsertClusters(incoming: ClusterRecord[]): Promise<void> {
-  return serialize(async () => {
-    const existing = await readJsonFile<ClusterRecord[]>(clustersPath(), []);
-    const byId = new Map(existing.map((c) => [c.clusterId, c]));
-    for (const record of incoming) {
-      byId.set(record.clusterId, record);
-    }
-    await writeJsonFileAtomic(clustersPath(), Array.from(byId.values()));
-  });
+export async function readHistory(): Promise<ClusterSnapshot[]> {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM history").all() as ClusterRow[];
+  return rows.map(historyRowToSnapshot);
 }
 
-/** Removes clusters from the live collection outright - used once a cluster's final state has been captured to history, rather than leaving a tombstone in place. `upsertClusters` only ever merges/overwrites; it has no way to make an entry disappear. */
-export async function removeClusters(clusterIds: string[]): Promise<void> {
-  if (clusterIds.length === 0) return;
-  return serialize(async () => {
-    const existing = await readJsonFile<ClusterRecord[]>(clustersPath(), []);
-    const toRemove = new Set(clusterIds);
-    const kept = existing.filter((c) => !toRemove.has(c.clusterId));
-    if (kept.length !== existing.length) {
-      await writeJsonFileAtomic(clustersPath(), kept);
-    }
-  });
+/** One cluster's history, oldest first - an indexed `WHERE clusterId = ?` query instead of filtering the full table in JS (see design.md Decision 6/point 6 and cluster-history-ui's per-cluster timeline). */
+export async function getClusterHistoryEntries(clusterId: string): Promise<ClusterSnapshot[]> {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM history WHERE clusterId = ? ORDER BY takenAtMs ASC").all(clusterId) as ClusterRow[];
+  return rows.map(historyRowToSnapshot);
+}
+
+/** Every history entry already classified as a lifecycle change at write time, most recent first - the indexed query that replaces getLifecycleAuditLog()'s old full-table scan/group/diff (see design.md Decision 7). */
+export async function getLifecycleHistoryEntries(): Promise<ClusterSnapshot[]> {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT * FROM history WHERE isLifecycleChange = 1 ORDER BY takenAtMs DESC")
+    .all() as ClusterRow[];
+  return rows.map(historyRowToSnapshot);
+}
+
+/** The entry immediately preceding `beforeTakenAt` for a cluster (any entry, not just lifecycle-flagged ones) - used to describe what changed leading into a given lifecycle entry, without loading that cluster's whole history. */
+export async function getPreviousHistoryEntry(clusterId: string, beforeTakenAt: string): Promise<ClusterSnapshot | null> {
+  const db = getDb();
+  const row = previousHistoryRow(db, clusterId, toEpochMs(beforeTakenAt) as number);
+  return row ? historyRowToSnapshot(row) : null;
 }
 
 /**
  * Trims history snapshots older than the retention window, for every
- * cluster, active or deleted alike - without this, an active cluster's
- * history grows by one entry per sync cycle forever, since nothing else
- * ever prunes it. A deleted cluster's final snapshot (see sync.ts/
- * manualActions.ts) ages out the same way as any other, once removed from
- * the live store there's no separate tombstone to purge here anymore.
+ * cluster, active or deleted alike - a single indexed DELETE instead of
+ * load-everything-filter-rewrite-everything (see design.md Decision 2/point 6).
  */
 export async function purgeExpiredHistory(now: Date, retentionDays: number): Promise<{
   purgedSnapshotCount: number;
 }> {
-  return serialize(async () => {
-    const history = await readJsonFile<ClusterSnapshot[]>(historyPath(), []);
-    const cutoffMs = retentionDays * 24 * 60 * 60 * 1000;
-
-    const keptHistory = history.filter(
-      (h) => now.getTime() - new Date(h.takenAt).getTime() <= cutoffMs,
-    );
-
-    if (keptHistory.length !== history.length) {
-      await writeJsonFileAtomic(historyPath(), keptHistory);
-    }
-
-    return { purgedSnapshotCount: history.length - keptHistory.length };
-  });
+  const db = getDb();
+  const cutoffMs = now.getTime() - retentionDays * 24 * 60 * 60 * 1000;
+  const result = db.prepare("DELETE FROM history WHERE takenAtMs < ?").run(cutoffMs);
+  return { purgedSnapshotCount: Number(result.changes) };
 }

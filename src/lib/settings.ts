@@ -1,6 +1,4 @@
-import { promises as fs } from "node:fs";
 import crypto from "node:crypto";
-import path from "node:path";
 import {
   DEFAULT_SETTINGS,
   type NotifiableAgeStatus,
@@ -9,47 +7,36 @@ import {
   type Settings,
   type TierNotificationConfig,
 } from "../types";
+import { fromSqliteBool, getDb, toSqliteBool } from "./db";
 
 /** "In Use" is deliberately excluded - see NotifiableAgeStatus. */
 const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Stale", "Forgotten"];
 
-const SETTINGS_FILE = "settings.json";
+/** Scalar `Settings` fields that live directly as `settings` table columns - everything else (`capellaOrgs`, `notificationsByTier`, `snoozeDayOptions`) is a one-to-many relation with its own table (see design.md Decision 3). */
+const SCALAR_SETTINGS_COLUMNS = [
+  "activityGraceHours",
+  "forgottenHours",
+  "capellaApiBaseUrl",
+  "syncIntervalHours",
+  "retentionDays",
+  "dashboardUsername",
+  "dashboardPassword",
+  "sessionSecret",
+  "slackBotToken",
+  "slackAppToken",
+  "consentReminderMax",
+  "consentExpiryDays",
+  "developerTurnOnEnabled",
+] as const;
 
-/**
- * Not a setting - see design.md. The data directory defines where
- * settings.json itself lives, so it can't be stored inside the file it
- * would need to be read from before the directory is even known.
- */
-const DATA_DIR = "./data";
-
-function settingsPath(): string {
-  return path.join(DATA_DIR, SETTINGS_FILE);
-}
-
-async function ensureDataDir(): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-}
-
-/** Write-then-rename so a crash mid-write never leaves a truncated/corrupt file. */
-async function writeJsonFileAtomic(filePath: string, data: unknown): Promise<void> {
-  await ensureDataDir();
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf8");
-  await fs.rename(tmpPath, filePath);
-}
-
-async function readJsonFileOrNull<T>(filePath: string): Promise<T | null> {
-  try {
-    const raw = await fs.readFile(filePath, "utf8");
-    return JSON.parse(raw) as T;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
-  }
-}
+type ScalarSettingsField = (typeof SCALAR_SETTINGS_COLUMNS)[number];
 
 function isPositiveInteger(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+function isNonNegativeInteger(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0;
 }
 
 function isNonEmptyString(v: unknown): v is string {
@@ -70,8 +57,8 @@ function isOrgConfigList(v: unknown): v is OrgConfig[] {
   if (!Array.isArray(v)) return false;
   return v.every((entry) => {
     if (typeof entry !== "object" || entry === null) return false;
-    const { orgId, orgName, projectSummary, apiKey } = entry as Record<string, unknown>;
-    if (!isNonEmptyString(orgId) || !isNonEmptyString(apiKey)) return false;
+    const { id, orgId, orgName, projectSummary, apiKey } = entry as Record<string, unknown>;
+    if (!isNonEmptyString(id) || !isNonEmptyString(orgId) || !isNonEmptyString(apiKey)) return false;
     if (orgName !== undefined && typeof orgName !== "string") return false;
     if (projectSummary !== undefined && typeof projectSummary !== "string") return false;
     return true;
@@ -80,8 +67,14 @@ function isOrgConfigList(v: unknown): v is OrgConfig[] {
 
 function isTierNotificationConfig(v: unknown): v is TierNotificationConfig {
   if (typeof v !== "object" || v === null) return false;
-  const { notify, askTurnOff, askDelete } = v as Record<string, unknown>;
-  return typeof notify === "boolean" && typeof askTurnOff === "boolean" && typeof askDelete === "boolean";
+  const { notify, askTurnOff, askDelete, autoTurnOffOnInaction, maxSnoozes } = v as Record<string, unknown>;
+  return (
+    typeof notify === "boolean" &&
+    typeof askTurnOff === "boolean" &&
+    typeof askDelete === "boolean" &&
+    typeof autoTurnOffOnInaction === "boolean" &&
+    isNonNegativeInteger(maxSnoozes)
+  );
 }
 
 function isNotificationsByTier(v: unknown): v is NotificationsByTier {
@@ -115,6 +108,7 @@ export function validateSettings(input: unknown): Settings | null {
     consentReminderMax,
     consentExpiryDays,
     snoozeDayOptions,
+    developerTurnOnEnabled,
   } = input as Record<string, unknown>;
 
   if (!isPositiveInteger(activityGraceHours) || !isPositiveInteger(forgottenHours)) {
@@ -141,11 +135,13 @@ export function validateSettings(input: unknown): Settings | null {
   if (!isPositiveInteger(consentReminderMax)) return null;
   if (!isPositiveInteger(consentExpiryDays)) return null;
   if (!isSnoozeDayOptionsList(snoozeDayOptions)) return null;
+  if (typeof developerTurnOnEnabled !== "boolean") return null;
 
   return {
     activityGraceHours,
     forgottenHours,
     capellaOrgs: capellaOrgs.map((o) => ({
+      id: o.id,
       orgId: o.orgId,
       orgName: o.orgName,
       projectSummary: o.projectSummary,
@@ -163,77 +159,174 @@ export function validateSettings(input: unknown): Settings | null {
     consentReminderMax,
     consentExpiryDays,
     snoozeDayOptions,
+    developerTurnOnEnabled,
   };
 }
 
-/**
- * One-time migration for settings written before the age-status model
- * moved from four day-based thresholds (`newDays`/`staleDays`/
- * `forgottenDays`/`inactivityGraceDays`) to two hour-based ones - see the
- * collapse-age-status-tiers change. `newDays`/`staleDays` have no
- * equivalent in the new model and are dropped; `forgottenDays` and
- * `inactivityGraceDays` are unit-converted (×24) into their closest new
- * counterparts. A legacy "Established" entry in `notificationsByTier` is
- * dropped too, since "In Use" isn't configurable. No-ops once a settings
- * object already has `activityGraceHours`/`forgottenHours`.
- */
-function migrateLegacyAgeSettings(rawObj: Record<string, unknown>): Record<string, unknown> {
-  if (isPositiveInteger(rawObj.activityGraceHours) && isPositiveInteger(rawObj.forgottenHours)) {
-    return rawObj;
+type Db = ReturnType<typeof getDb>;
+
+/** Assembles a `Settings`-shaped object from the singleton `settings` row plus its three child tables - the SQL-native replacement for parsing one JSON blob. */
+function assembleSettings(db: Db, row: Record<string, unknown>): unknown {
+  const orgRows = db.prepare("SELECT * FROM org_configs ORDER BY position").all();
+  const tierRows = db.prepare("SELECT * FROM tier_notifications").all() as Array<Record<string, unknown>>;
+  const snoozeRows = db.prepare("SELECT days FROM snooze_day_options ORDER BY position").all() as Array<{ days: number }>;
+
+  const notificationsByTier: Record<string, TierNotificationConfig> = {};
+  for (const t of tierRows) {
+    notificationsByTier[t.tier as string] = {
+      notify: fromSqliteBool(t.notify as number),
+      askTurnOff: fromSqliteBool(t.askTurnOff as number),
+      askDelete: fromSqliteBool(t.askDelete as number),
+      autoTurnOffOnInaction: fromSqliteBool(t.autoTurnOffOnInaction as number),
+      maxSnoozes: t.maxSnoozes as number,
+    };
   }
 
-  const migrated = { ...rawObj };
-  if (isPositiveInteger(rawObj.inactivityGraceDays)) {
-    migrated.activityGraceHours = rawObj.inactivityGraceDays * 24;
-  }
-  if (isPositiveInteger(rawObj.forgottenDays)) {
-    migrated.forgottenHours = rawObj.forgottenDays * 24;
-  }
-  delete migrated.newDays;
-  delete migrated.staleDays;
-  delete migrated.forgottenDays;
-  delete migrated.inactivityGraceDays;
+  return {
+    activityGraceHours: row.activityGraceHours,
+    forgottenHours: row.forgottenHours,
+    capellaOrgs: (orgRows as Array<Record<string, unknown>>).map((o) => ({
+      id: o.id,
+      orgId: o.orgId,
+      orgName: o.orgName ?? undefined,
+      projectSummary: o.projectSummary ?? undefined,
+      apiKey: o.apiKey,
+    })),
+    capellaApiBaseUrl: row.capellaApiBaseUrl,
+    syncIntervalHours: row.syncIntervalHours,
+    retentionDays: row.retentionDays,
+    dashboardUsername: row.dashboardUsername,
+    dashboardPassword: row.dashboardPassword,
+    sessionSecret: row.sessionSecret,
+    slackBotToken: row.slackBotToken,
+    slackAppToken: row.slackAppToken,
+    notificationsByTier,
+    consentReminderMax: row.consentReminderMax,
+    consentExpiryDays: row.consentExpiryDays,
+    snoozeDayOptions: snoozeRows.map((r) => r.days),
+    developerTurnOnEnabled: fromSqliteBool(row.developerTurnOnEnabled as number),
+  };
+}
 
-  if (typeof migrated.notificationsByTier === "object" && migrated.notificationsByTier !== null) {
-    const { Established, ...rest } = migrated.notificationsByTier as Record<string, unknown>;
-    migrated.notificationsByTier = rest;
-  }
+function replaceOrgConfigs(db: Db, orgs: OrgConfig[]): void {
+  db.prepare("DELETE FROM org_configs").run();
+  const stmt = db.prepare(
+    "INSERT INTO org_configs (id, orgId, orgName, projectSummary, apiKey, position) VALUES (@id, @orgId, @orgName, @projectSummary, @apiKey, @position)",
+  );
+  orgs.forEach((org, position) => {
+    stmt.run({
+      id: org.id,
+      orgId: org.orgId,
+      orgName: org.orgName ?? null,
+      projectSummary: org.projectSummary ?? null,
+      apiKey: org.apiKey,
+      position,
+    });
+  });
+}
 
-  return migrated;
+function replaceTierNotifications(db: Db, tiers: NotificationsByTier): void {
+  db.prepare("DELETE FROM tier_notifications").run();
+  const stmt = db.prepare(
+    "INSERT INTO tier_notifications (tier, notify, askTurnOff, askDelete, autoTurnOffOnInaction, maxSnoozes) VALUES (@tier, @notify, @askTurnOff, @askDelete, @autoTurnOffOnInaction, @maxSnoozes)",
+  );
+  for (const tier of NOTIFIABLE_TIERS) {
+    const config = tiers[tier];
+    stmt.run({
+      tier,
+      notify: toSqliteBool(config.notify),
+      askTurnOff: toSqliteBool(config.askTurnOff),
+      askDelete: toSqliteBool(config.askDelete),
+      autoTurnOffOnInaction: toSqliteBool(config.autoTurnOffOnInaction),
+      maxSnoozes: config.maxSnoozes,
+    });
+  }
+}
+
+function replaceSnoozeDayOptions(db: Db, days: number[]): void {
+  db.prepare("DELETE FROM snooze_day_options").run();
+  const stmt = db.prepare("INSERT INTO snooze_day_options (position, days) VALUES (@position, @days)");
+  days.forEach((d, position) => stmt.run({ position, days: d }));
+}
+
+/** Inserts the singleton `settings` row (id = 1) - used for first-run seeding. Does not touch the child tables; call the `replace*` helpers separately. */
+function insertSettingsRow(db: Db, settings: Settings): void {
+  const columns = SCALAR_SETTINGS_COLUMNS;
+  const placeholders = columns.map((c) => `@${c}`).join(", ");
+  const values: Record<ScalarSettingsField | "id", string | number> = {
+    id: 1,
+    activityGraceHours: settings.activityGraceHours,
+    forgottenHours: settings.forgottenHours,
+    capellaApiBaseUrl: settings.capellaApiBaseUrl,
+    syncIntervalHours: settings.syncIntervalHours,
+    retentionDays: settings.retentionDays,
+    dashboardUsername: settings.dashboardUsername,
+    dashboardPassword: settings.dashboardPassword,
+    sessionSecret: settings.sessionSecret,
+    slackBotToken: settings.slackBotToken,
+    slackAppToken: settings.slackAppToken,
+    consentReminderMax: settings.consentReminderMax,
+    consentExpiryDays: settings.consentExpiryDays,
+    developerTurnOnEnabled: toSqliteBool(settings.developerTurnOnEnabled),
+  };
+  db.prepare(`INSERT INTO settings (id, ${columns.join(", ")}) VALUES (@id, ${placeholders})`).run(values);
 }
 
 /**
- * Falls back to (and persists) defaults when the file is missing or fails
- * validation outright. When the file is valid except for missing newer
- * fields (e.g. upgrading from a version that only had age-status
- * thresholds), fills those in from defaults rather than discarding the
- * fields that were already valid - a corrupt *value* still loses everything,
- * but a merely *incomplete* file doesn't.
+ * Inserts a fully-formed `Settings` object (scalar row plus all three child
+ * tables) as a single unit - used for first-run seeding. Callers are
+ * responsible for wrapping this in a transaction when it's part of a larger
+ * operation.
+ */
+function insertFullSettings(db: Db, settings: Settings): void {
+  insertSettingsRow(db, settings);
+  replaceOrgConfigs(db, settings.capellaOrgs);
+  replaceTierNotifications(db, settings.notificationsByTier);
+  replaceSnoozeDayOptions(db, settings.snoozeDayOptions);
+}
+
+/**
+ * Reads settings from SQLite. Unlike the old JSON-file store, there is no
+ * "entirely missing field" case to gap-fill on the ongoing read path - every
+ * scalar column is NOT NULL from the moment it's inserted, and a future new
+ * field is added via an explicit schema migration (see design.md Decision 8),
+ * not discovered missing at read time. What remains is exactly the failure
+ * mode design.md calls out: a value edited directly in the database that
+ * fails cross-field validation (e.g. `activityGraceHours >= forgottenHours`).
+ * That still throws rather than silently resetting anything - see
+ * settings-read-safety's design.md for the incident this guards against.
  */
 export async function readSettings(): Promise<Settings> {
-  const rawFile = await readJsonFileOrNull<unknown>(settingsPath());
-  const raw =
-    rawFile !== null && typeof rawFile === "object"
-      ? migrateLegacyAgeSettings(rawFile as Record<string, unknown>)
-      : rawFile;
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM settings WHERE id = 1").get() as Record<string, unknown> | undefined;
 
-  if (raw !== null) {
-    const validated = validateSettings(raw);
-    if (validated) return validated;
+  if (!row) {
+    const result: Settings = { ...DEFAULT_SETTINGS, sessionSecret: crypto.randomBytes(32).toString("hex") };
+    db.exec("BEGIN");
+    try {
+      insertFullSettings(db, result);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+    return result;
   }
 
-  const rawObj = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const sessionSecret = isNonEmptyString(rawObj.sessionSecret)
-    ? rawObj.sessionSecret
-    : crypto.randomBytes(32).toString("hex");
-  const merged = { ...DEFAULT_SETTINGS, ...rawObj, sessionSecret };
-
-  const result = validateSettings(merged) ?? { ...DEFAULT_SETTINGS, sessionSecret };
-  await writeJsonFileAtomic(settingsPath(), result);
-  return result;
+  const assembled = assembleSettings(db, row);
+  const validated = validateSettings(assembled);
+  if (!validated) {
+    throw new Error(
+      "The settings database failed validation - a field that is present has an invalid value. " +
+        "Refusing to overwrite it with defaults, since that would silently discard real configuration (API keys, " +
+        "thresholds, credentials). Inspect the `settings`/`org_configs`/`tier_notifications`/`snooze_day_options` " +
+        "tables and fix the offending value by hand, or check for a bug in validateSettings if this was previously working.",
+    );
+  }
+  return validated;
 }
 
-/** Merges onto currently persisted settings so a form only submitting its own fields doesn't clobber the rest. */
+/** Merges onto currently persisted settings so a form only submitting its own fields doesn't clobber the rest. Persists via targeted column/table writes - a field absent from `partial` is never named in any SQL statement, so it cannot be touched (see design.md Decision 2). */
 export async function writeSettings(
   partial: Record<string, unknown>,
 ): Promise<{ ok: true; settings: Settings } | { ok: false; error: string }> {
@@ -249,6 +342,27 @@ export async function writeSettings(
         "empty, and the snooze day options are a comma-separated list of distinct positive whole numbers.",
     };
   }
-  await writeJsonFileAtomic(settingsPath(), validated);
+
+  const db = getDb();
+  db.exec("BEGIN");
+  try {
+    const touchedScalarKeys = SCALAR_SETTINGS_COLUMNS.filter((key) => key in partial);
+    if (touchedScalarKeys.length > 0) {
+      const setClause = touchedScalarKeys.map((key) => `${key} = @${key}`).join(", ");
+      const values: Record<string, string | number> = {};
+      for (const key of touchedScalarKeys) {
+        values[key] = key === "developerTurnOnEnabled" ? toSqliteBool(validated[key] as boolean) : (validated[key] as string | number);
+      }
+      db.prepare(`UPDATE settings SET ${setClause} WHERE id = 1`).run(values);
+    }
+    if ("capellaOrgs" in partial) replaceOrgConfigs(db, validated.capellaOrgs);
+    if ("notificationsByTier" in partial) replaceTierNotifications(db, validated.notificationsByTier);
+    if ("snoozeDayOptions" in partial) replaceSnoozeDayOptions(db, validated.snoozeDayOptions);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+
   return { ok: true, settings: validated };
 }

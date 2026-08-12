@@ -19,6 +19,7 @@ import {
   purgeExpiredHistory,
   historyEntriesDiffer,
 } from "./store";
+import { computeFieldChanges, isLifecycleChange } from "./historyFields";
 import { readSettings } from "./settings";
 import { applyConsentNotifications } from "./notifications";
 import type {
@@ -40,13 +41,6 @@ function toClusterConfig(raw: CapellaClusterConfig): ClusterConfig {
         cpu: group?.node.compute.cpu ?? 0,
         ram: group?.node.compute.ram ?? 0,
       },
-      storage: group?.node.disk
-        ? {
-            type: group.node.disk.type,
-            sizeGb: group.node.disk.storage,
-            iops: group.node.disk.iops,
-          }
-        : undefined,
     },
     status: raw.currentState,
   };
@@ -149,7 +143,8 @@ function consentFieldsEqual(a: ClusterRecord, b: ClusterRecord): boolean {
     a.slackChannelId === b.slackChannelId &&
     a.slackMessageTs === b.slackMessageTs &&
     a.snoozeUntil === b.snoozeUntil &&
-    a.snoozeJustification === b.snoozeJustification
+    a.snoozeJustification === b.snoozeJustification &&
+    a.snoozeCount === b.snoozeCount
   );
 }
 
@@ -164,6 +159,7 @@ function adoptConsentFields(record: ClusterRecord, source: ClusterRecord): void 
   record.slackMessageTs = source.slackMessageTs;
   record.snoozeUntil = source.snoozeUntil;
   record.snoozeJustification = source.snoozeJustification;
+  record.snoozeCount = source.snoozeCount;
 }
 
 export interface SyncResult {
@@ -276,6 +272,7 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
           clusterName: raw.name,
           orgId: org.orgId,
           orgName,
+          orgConfigId: org.id,
           projectId: project.id,
           projectName: project.name,
           config: clusterConfig,
@@ -306,6 +303,7 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
           slackMessageTs: existing?.slackMessageTs ?? null,
           snoozeUntil: existing?.snoozeUntil ?? null,
           snoozeJustification: existing?.snoozeJustification ?? null,
+          snoozeCount: existing?.snoozeCount ?? 0,
         };
 
         records.push(record);
@@ -380,9 +378,14 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
   // Slack click or reconciliation outcome landing mid-cycle already wrote its
   // own history entry the moment it happened, and gating against the stale
   // existingById snapshot here would silently duplicate it.
-  const changedSnapshots = snapshots.filter((snapshot) => {
+  // isLifecycleChange is computed here, at write time, from the same `prior`
+  // used for the historyEntriesDiffer gate above - not re-derived later on
+  // every audit-log read. See cluster-history-ui spec "Cross-cluster
+  // lifecycle audit log" and design.md Decision 7.
+  const changedSnapshots = snapshots.flatMap((snapshot) => {
     const prior = freshExisting.get(snapshot.clusterId) ?? existingById.get(snapshot.clusterId) ?? null;
-    return !prior || historyEntriesDiffer(prior, snapshot.record);
+    if (prior && !historyEntriesDiffer(prior, snapshot.record)) return [];
+    return [{ ...snapshot, isLifecycleChange: isLifecycleChange(computeFieldChanges(prior, snapshot.record)) }];
   });
 
   await upsertClusters(records);
