@@ -4,6 +4,7 @@ import { readSettings } from "@/lib/settings";
 import type { CostSnapshot } from "@/lib/costSeries";
 import type { ClusterLifetime } from "@/lib/clusterCounts";
 import { formatConfigSummary, formatStatusLabel } from "@/lib/configSummary";
+import { classifyClusterStatus } from "@/lib/capellaClient";
 import { isAlreadyOff } from "@/lib/slack";
 import { isEmailLike } from "@/lib/notifications";
 import { ageDaysBetween, ageHoursBetween, formatAge } from "@/lib/format";
@@ -65,12 +66,15 @@ export default async function DashboardPage({
       actualCostAsOfMs: c.actualCost.asOf ? new Date(c.actualCost.asOf).getTime() : null,
       actualCostUnavailableReason: c.actualCost.unavailableReason ?? null,
       statusLabel: formatStatusLabel(c.config.status),
+      statusBucket: classifyClusterStatus(c.config.status),
       statusIsOff: isAlreadyOff(c.config.status),
       ownerEligibleForAsk: isEmailLike(c.ownerDerived),
       consentStatus: c.consentStatus,
       actionOutcome: c.actionOutcome,
       snoozeUntilMs: c.snoozeUntil ? new Date(c.snoozeUntil).getTime() : null,
       snoozeJustification: c.snoozeJustification,
+      consentStatusChangedAtMs: c.consentStatusChangedAt ? new Date(c.consentStatusChangedAt).getTime() : null,
+      workflowNote: c.workflowNote,
       ageStatus: computeAgeStatus(
         ageHoursBetween(createdAtMs, now),
         lastActivityMs,

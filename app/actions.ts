@@ -43,6 +43,20 @@ export async function loginAction(formData: FormData): Promise<void> {
   const token = await createSessionToken(username);
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE_NAME, token, SESSION_COOKIE_OPTIONS);
+
+  // Fire-and-forget: catches up on Capella-side changes without making the
+  // operator wait for a full sync cycle before seeing the dashboard - see
+  // dashboard-auth's "Login triggers a background cluster sync" requirement.
+  // runSyncCycle's own cycleInFlight guard de-dupes this against the
+  // scheduler's own tick or a concurrent login, so it can never race into
+  // two overlapping cycles. revalidatePath here is best-effort: it
+  // invalidates the cache for whoever requests the dashboard next, but
+  // can't guarantee this response's own redirect renders with results that
+  // haven't finished yet.
+  void runSyncCycle()
+    .then(() => revalidatePath("/"))
+    .catch((err) => console.error("[login] background sync failed:", err));
+
   redirect("/");
 }
 

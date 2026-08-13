@@ -126,3 +126,33 @@ When more than one configured organization entry shares an organization ID (see 
 #### Scenario: Cluster's org has more than one configured entry
 - **WHEN** an operator triggers a manual turn-off, delete, or turn-on for a cluster whose organization has multiple configured entries (distinct project-scoped API keys)
 - **THEN** the action is performed using the entry that actually has access to that cluster's project, not a different entry that happens to share the same organization ID
+
+### Requirement: Manual actions record Capella's own in-progress status, not an assumed terminal one
+Immediately after a manual turn-off or turn-on call to Capella succeeds, the system SHALL record, as the cluster's operational status, the in-progress status value Capella itself reports for a cluster transitioning in that direction, rather than assuming and recording the direction's terminal status before Capella has confirmed the transition is complete.
+
+#### Scenario: Manual turn-off records the in-progress state, not the terminal one
+- **WHEN** an operator confirms a manual turn-off and the Capella call succeeds
+- **THEN** the cluster's recorded operational status becomes Capella's in-progress "turning off" state, not its confirmed "turned off" state
+
+#### Scenario: Manual turn-on records the in-progress state, not the terminal one
+- **WHEN** the manual turn-on toggle is enabled, an operator confirms a manual turn-on, and the Capella call succeeds
+- **THEN** the cluster's recorded operational status becomes Capella's in-progress "turning on" state, not its confirmed active state
+
+#### Scenario: A later sync confirms the terminal status
+- **WHEN** a cluster sync cycle runs after a manual turn-off or turn-on has recorded an in-progress status
+- **THEN** the cluster's recorded operational status is updated to whatever status Capella currently reports, which may still be in-progress or may by then be the confirmed terminal state
+
+### Requirement: Manual turn-off and turn-on clear any active consent cycle
+The system SHALL clear a cluster's active consent cycle (pending, snoozed, approved-turnoff, approved-delete, or expired) back to no active cycle whenever a manual turn-off or manual turn-on is performed against that cluster, in addition to superseding its live pending consent message per the requirement above. This applies regardless of which consent status the cycle was in at the time.
+
+#### Scenario: Manual turn-off with a pending or snoozed request
+- **WHEN** an operator manually turns off a cluster that has a pending or snoozed consent request
+- **THEN** the request's live message is superseded and the cluster's consent cycle resets to no active cycle, so no further reminder is sent for it
+
+#### Scenario: Manual turn-off with an approved-but-not-yet-actioned decision
+- **WHEN** an operator manually turns off a cluster that already has an approved-turnoff or approved-delete decision awaiting reconciliation
+- **THEN** the cluster's consent cycle resets to no active cycle, and the reconciliation loop no longer has an approved decision to act on for that cluster
+
+#### Scenario: Manual turn-on clears the cycle
+- **WHEN** the manual turn-on toggle is enabled and an operator manually turns on a cluster with any active consent cycle
+- **THEN** the cluster's consent cycle resets to no active cycle

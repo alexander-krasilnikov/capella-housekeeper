@@ -1,0 +1,34 @@
+## Why
+
+A cluster's consent/action state today explains *what* it is (pending, snoozed, approved-turnoff, failed...) but not *why* it got there when the system itself made the call - the reason text for an auto-turnoff, a re-verification skip, or a Capella failure is only ever typed into a live Slack message that later gets overwritten, so the dashboard and audit log are left reconstructing a plausible story from the enum value alone instead of showing what actually happened. Separately, a manual turn-off performed from the dashboard while a consent request is still pending or snoozed leaves that request active - the owner keeps getting reminded to turn off a cluster an operator already turned off. Both are small, fixable gaps in the existing consent/action-outcome tracking, not a redesign of it.
+
+## What Changes
+
+- A persisted, free-text explanation is recorded whenever the *system* (not the owner) drives a consent-status or action-outcome transition: auto-turnoff on expiry, auto-turnoff on snooze-cap exhaustion, a reconciliation skip after re-verification, and a Capella failure's actual error text. This explanation is stored on the cluster record and shown in the dashboard and audit log, replacing the current practice of guessing narration text purely from the enum value.
+- The timestamp of the most recent consent-status change is recorded independently of the existing pending-cycle-start timestamp (which continues to drive only reminder/expiry timing unchanged), so the dashboard and audit log can state how long a cluster has been in its current consent status (e.g. snoozed, approved, expired).
+- A manual turn-off now clears any active consent cycle (pending, snoozed, approved, or expired) on the cluster, the same way a manual turn-on already does - so an owner is not reminded about, or able to approve/snooze/decline, a request for a cluster that has already been turned off by an operator.
+- The dashboard grid gains four columns for the above (Status Since, Workflow Note) plus the pre-existing snooze fields (Snooze Until, Snooze Reason), previously visible only in the row detail panel - all four hidden by default but toggleable via the column-visibility control, which itself now closes on an outside click.
+- **Bug fix, found via manual verification of the above**: the per-cluster history timeline and lifecycle audit log were showing a large proportion of "No change recorded" sync entries - a real gap between `cluster-sync`'s own spec (history is gated against the *last recorded* entry) and its implementation (which was actually gating against the live `clusters` table, which another process can transiently move away from and back between two sync cycles). Fixed to gate against the last recorded entry, per spec.
+- **Bug fix, same verification pass**: a history entry describing a pure operational-status change (e.g. "Turned Off" → "Turning Off") was labeled "Configuration," because the tracked `config` field bundled resource shape and operational status together. Split into two independently-tracked fields, `config` (shape only) and `status`.
+
+Explicitly out of scope (considered and rejected during exploration - see conversation): merging `consentStatus` and `actionOutcome` into one combined enum, and renaming the existing consent-focused fields/types to generic "workflow" naming. Both were judged unnecessary churn that would re-conflate a decision this codebase just finished separating (see the archived `cluster-status-accuracy` change).
+
+## Capabilities
+
+### New Capabilities
+_None._
+
+### Modified Capabilities
+- `cluster-consent-notifications`: auto-turnoff-on-expiry and auto-turnoff-on-snooze-cap now record a persisted explanation alongside the decision; the record now also tracks when its consent status last changed, independent of the pending-cycle-start timestamp.
+- `cluster-lifecycle-actions`: a reconciliation skip (re-verification failed) or failure (Capella call error) now records a persisted explanation - the skip reason or the actual error text - alongside the outcome.
+- `manual-cluster-actions`: a manual turn-off now clears the cluster's active consent cycle, matching manual turn-on's existing behavior, instead of leaving a pending/snoozed/approved/expired request in place against an already-off cluster.
+- `cluster-history-ui`: the per-cluster timeline and cross-cluster audit log display the persisted explanation for a system-driven transition when one is present, instead of narration text derived solely from the changed field's enum value.
+- `cluster-dashboard-ui`: Status Since, Workflow Note, Snooze Until, and Snooze Reason are now grid columns (hidden by default, toggleable), falling back to the row detail panel's Workflow group when hidden - same as Consent/Action; the column-visibility control closes on an outside click.
+- `cluster-sync`: history entries are gated against the last *recorded* entry (as already specified) rather than the live cluster record, and `config`/`status` are tracked as two independent compared fields instead of one bundled field.
+- `cluster-history-ui`: history entries display "Status" separately from "Configuration" when only the operational status changed.
+
+## Impact
+
+- **Code**: `src/types.ts` (new fields on `ClusterRecord`), `src/lib/db.ts` (SQLite schema + version-2 migration for the new columns), `src/lib/store.ts` (row mapping, `getLatestHistoryEntry`), `src/lib/sync.ts` (carry-forward, history-append gate now uses `getLatestHistoryEntry`), `src/lib/notifications.ts` (`applyAutoTurnOffDecision`, `applyConsentNotifications` write the new fields), `src/lib/reconciliation.ts` (`applyActionOutcome` writes the new fields on skip/failure), `src/lib/slackBot.ts` (`handleSnoozeCapExceeded` passes through the reason), `src/lib/manualActions.ts` (`setClusterPower`'s "off" direction resets the consent cycle like "on" already does), `src/lib/historyFields.ts` (`describeAuditEntry` prefers the persisted explanation when present; `config`/`status` split), `app/components/ClusterTable.tsx` (new grid columns, default visibility, click-outside-to-close, stale-persisted-config handling), `app/page.tsx` (row mapping).
+- **Data model**: two new fields on `ClusterRecord` (a persisted explanation string, a consent-status-changed timestamp); no existing field removed or renamed; no change to `consentStatus`/`actionOutcome`'s enum values. SQLite schema gains two nullable columns via an additive migration.
+- **No breaking changes**; existing stored records without the new fields simply have no explanation/timestamp to show until their next transition, same backward-compatibility pattern already used for other optional fields in `ClusterRecord`. The history-gate and config/status-split fixes are corrections to existing behavior, not new data - no migration needed for already-recorded history rows (see design.md's Migration Plan).

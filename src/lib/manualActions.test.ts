@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClusterRecord, OrgConfig, Settings } from "../types";
 
-const { turnOnCluster } = vi.hoisted(() => ({ turnOnCluster: vi.fn() }));
+const { turnOnCluster, turnOffCluster } = vi.hoisted(() => ({ turnOnCluster: vi.fn(), turnOffCluster: vi.fn() }));
 vi.mock("./capellaClient", () => ({
   turnOnCluster,
-  turnOffCluster: vi.fn(),
+  turnOffCluster,
   deleteCluster: vi.fn(),
+  TRANSITIONAL_STATUS: { turningOff: "turningOff", turningOn: "turningOn", destroying: "destroying" },
   CapellaApiError: class CapellaApiError extends Error {
     constructor(
       message: string,
@@ -34,7 +35,7 @@ vi.mock("./settings", () => ({ readSettings }));
 const { supersedeLiveMessage } = vi.hoisted(() => ({ supersedeLiveMessage: vi.fn(async () => undefined) }));
 vi.mock("./notifications", () => ({ supersedeLiveMessage }));
 
-const { resolveOrgConfig, manualTurnOn } = await import("./manualActions");
+const { resolveOrgConfig, manualTurnOn, manualTurnOff } = await import("./manualActions");
 const { CapellaApiError } = await import("./capellaClient");
 
 function org(overrides: Partial<OrgConfig> = {}): OrgConfig {
@@ -124,6 +125,8 @@ function fullRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
     snoozeUntil: null,
     snoozeJustification: null,
     snoozeCount: 0,
+    consentStatusChangedAt: null,
+    workflowNote: null,
     ...overrides,
   };
 }
@@ -155,10 +158,13 @@ describe("manualTurnOn", () => {
     expect(result).toEqual({ ok: true, message: "Turned on my-cluster." });
     expect(turnOnCluster).toHaveBeenCalledWith(org(), settings.capellaApiBaseUrl, "project-1", "cluster-1");
     expect(supersedeLiveMessage).toHaveBeenCalledWith(off, settings, expect.stringContaining("my-cluster"));
-    expect(upsertClusters).toHaveBeenCalledWith([expect.objectContaining({ config: expect.objectContaining({ status: "healthy" }) })]);
+    // Records Capella's own in-progress state, not the assumed terminal
+    // "healthy" - Capella's 202 response confirms nothing about whether the
+    // transition has actually finished. See manual-cluster-actions spec.
+    expect(upsertClusters).toHaveBeenCalledWith([expect.objectContaining({ config: expect.objectContaining({ status: "turningOn" }) })]);
     expect(appendHistoryIfChanged).toHaveBeenCalledWith(
       expect.objectContaining({ clusterId: "cluster-1" }),
-      expect.objectContaining({ config: expect.objectContaining({ status: "healthy" }) }),
+      expect.objectContaining({ config: expect.objectContaining({ status: "turningOn" }) }),
       "manual-turn-on",
       expect.any(String),
     );
@@ -249,7 +255,99 @@ describe("manualTurnOn", () => {
         snoozeUntil: null,
         snoozeJustification: null,
         snoozeCount: 0,
+        workflowNote: null,
       }),
+    ]);
+  });
+});
+
+describe("manualTurnOff", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("turns the cluster off and appends a manual-turn-off history entry", async () => {
+    const settings = fullSettings();
+    const running = fullRecord({ config: { ...fullRecord().config, status: "healthy" } });
+    readSettings.mockResolvedValue(settings);
+    getCluster.mockResolvedValue(running);
+
+    const result = await manualTurnOff("cluster-1");
+
+    expect(result).toEqual({ ok: true, message: "Turned off my-cluster." });
+    expect(turnOffCluster).toHaveBeenCalledWith(org(), settings.capellaApiBaseUrl, "project-1", "cluster-1");
+    expect(upsertClusters).toHaveBeenCalledWith([expect.objectContaining({ config: expect.objectContaining({ status: "turningOff" }) })]);
+    expect(appendHistoryIfChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ clusterId: "cluster-1" }),
+      expect.objectContaining({ config: expect.objectContaining({ status: "turningOff" }) }),
+      "manual-turn-off",
+      expect.any(String),
+    );
+  });
+
+  it("surfaces a Capella API failure without writing back cluster state", async () => {
+    readSettings.mockResolvedValue(fullSettings());
+    getCluster.mockResolvedValue(fullRecord());
+    turnOffCluster.mockRejectedValue(new CapellaApiError("service unavailable", 503));
+
+    const result = await manualTurnOff("cluster-1");
+
+    expect(result).toEqual({ ok: false, message: "Couldn't turn off my-cluster: service unavailable" });
+    expect(upsertClusters).not.toHaveBeenCalled();
+    expect(appendHistoryIfChanged).not.toHaveBeenCalled();
+  });
+
+  it("resets a pending consent cycle, so a reminder isn't sent for a cluster already turned off manually", async () => {
+    // Regression test: manual turn-off used to leave `consentStatus` at
+    // "pending" untouched, so applyConsentNotifications kept resending
+    // reminders asking the owner to turn off a cluster an operator had
+    // already turned off - see design.md's Decisions.
+    const pending = fullRecord({
+      consentStatus: "pending",
+      consentCycleStartedAt: "2026-01-01T00:00:00.000Z",
+      consentTierAtDecision: "Stale",
+      remindersSent: 1,
+      slackChannelId: "C1",
+      slackMessageTs: "123",
+    });
+    readSettings.mockResolvedValue(fullSettings());
+    getCluster.mockResolvedValue(pending);
+    turnOffCluster.mockResolvedValue(undefined);
+
+    await manualTurnOff("cluster-1");
+
+    expect(upsertClusters).toHaveBeenCalledWith([
+      expect.objectContaining({
+        consentStatus: "none",
+        consentCycleStartedAt: null,
+        remindersSent: 0,
+        consentTierAtDecision: null,
+        actionOutcome: "none",
+        slackChannelId: null,
+        slackMessageTs: null,
+        snoozeUntil: null,
+        snoozeJustification: null,
+        snoozeCount: 0,
+        workflowNote: null,
+      }),
+    ]);
+  });
+
+  it("resets an approved-but-not-yet-actioned decision, so reconciliation has nothing left to act on", async () => {
+    const approvedDelete = fullRecord({
+      consentStatus: "approved-delete",
+      consentTierAtDecision: "Forgotten",
+      snoozeCount: 3,
+      workflowNote: "the maximum of 3 snooze(s) was reached",
+    });
+    readSettings.mockResolvedValue(fullSettings());
+    getCluster.mockResolvedValue(approvedDelete);
+    turnOffCluster.mockResolvedValue(undefined);
+
+    await manualTurnOff("cluster-1");
+
+    expect(upsertClusters).toHaveBeenCalledWith([
+      expect.objectContaining({ consentStatus: "none", actionOutcome: "none", workflowNote: null }),
     ]);
   });
 });

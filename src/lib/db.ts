@@ -53,7 +53,9 @@ const CLUSTER_RECORD_COLUMNS_SQL = `
   slackMessageTs TEXT,
   snoozeUntilMs INTEGER,
   snoozeJustification TEXT,
-  snoozeCount INTEGER NOT NULL
+  snoozeCount INTEGER NOT NULL,
+  consentStatusChangedAtMs INTEGER,
+  workflowNote TEXT
 `;
 
 /** Every column name in `CLUSTER_RECORD_COLUMNS_SQL`, in declaration order - used to build INSERT/UPDATE statements without repeating the list. */
@@ -118,15 +120,42 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX idx_history_lifecycle ON history (isLifecycleChange, takenAtMs)`,
 ];
 
-/** Creates every table/index if the schema hasn't been created yet (`PRAGMA user_version` < 1). Exported so tests can bootstrap a fresh in-memory database identically to the real one - see db.test setup in store.test.ts/settings.test.ts. */
+/** Current schema version - bump alongside a migration below when CLUSTER_RECORD_COLUMNS_SQL (or any other table) gains/loses a column. */
+const SCHEMA_VERSION = 2;
+
+/**
+ * Column-additive migrations applied, in order, to bring an existing
+ * database from one version up to the next - each entry's statements run
+ * only when upgrading *from* that exact version, so a fresh database (built
+ * from SCHEMA_STATEMENTS, which already reflects the latest columns) never
+ * runs any of these. `ALTER TABLE ... ADD COLUMN` is the only schema change
+ * these support - anything requiring column removal or a type change would
+ * need a table rebuild instead.
+ */
+const MIGRATIONS: Record<number, string[]> = {
+  1: [
+    "ALTER TABLE clusters ADD COLUMN consentStatusChangedAtMs INTEGER",
+    "ALTER TABLE clusters ADD COLUMN workflowNote TEXT",
+    "ALTER TABLE history ADD COLUMN consentStatusChangedAtMs INTEGER",
+    "ALTER TABLE history ADD COLUMN workflowNote TEXT",
+  ],
+};
+
+/** Creates every table/index if the schema hasn't been created yet, or applies any migrations needed to reach `SCHEMA_VERSION` if it has. Exported so tests can bootstrap a fresh in-memory database identically to the real one - see db.test setup in store.test.ts/settings.test.ts. */
 export function bootstrapSchema(db: DatabaseSync): void {
   const { user_version: version } = db.prepare("PRAGMA user_version").get() as { user_version: number };
-  if (version >= 1) return;
+  if (version >= SCHEMA_VERSION) return;
 
   db.exec("BEGIN");
   try {
-    for (const statement of SCHEMA_STATEMENTS) db.exec(statement);
-    db.exec("PRAGMA user_version = 1");
+    if (version === 0) {
+      for (const statement of SCHEMA_STATEMENTS) db.exec(statement);
+    } else {
+      for (let v = version; v < SCHEMA_VERSION; v++) {
+        for (const statement of MIGRATIONS[v] ?? []) db.exec(statement);
+      }
+    }
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");

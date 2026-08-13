@@ -97,6 +97,8 @@ async function handleConsentAction(action: DirectConsentAction, clusterId: strin
 
   const prior = { ...record };
   record.consentStatus = ACTION_TO_CONSENT_STATUS[action];
+  record.consentStatusChangedAt = new Date().toISOString();
+  record.workflowNote = null;
   await upsertClusters([record]);
   await appendHistoryIfChanged(prior, record, "slack-decision", new Date().toISOString());
 
@@ -132,6 +134,8 @@ async function handleSnoozeSubmission(
   const nowMs = Date.now();
   const snoozeUntilMs = nowMs + days * DAY_MS;
   record.consentStatus = "snoozed";
+  record.consentStatusChangedAt = new Date(nowMs).toISOString();
+  record.workflowNote = null;
   record.snoozeUntil = new Date(snoozeUntilMs).toISOString();
   record.snoozeJustification = justification;
   record.snoozeCount += 1;
@@ -169,9 +173,10 @@ async function handleSnoozeCapExceeded(
   maxSnoozes: number,
   settings: Settings,
 ): Promise<void> {
-  await applyAutoTurnOffDecision(record, tier, settings, `the maximum of ${maxSnoozes} snooze(s) was reached`);
+  const nowMs = Date.now();
+  await applyAutoTurnOffDecision(record, tier, settings, `the maximum of ${maxSnoozes} snooze(s) was reached`, nowMs);
 
-  // Re-read fresh right before writing, applying only the two fields
+  // Re-read fresh right before writing, applying only the fields
   // applyAutoTurnOffDecision just decided - not `record` from the top of
   // the click handler. applyAutoTurnOffDecision just did a Slack round trip
   // (supersedeLiveMessage's chat.update), plenty of time for a concurrent
@@ -184,6 +189,8 @@ async function handleSnoozeCapExceeded(
   const prior = { ...fresh };
   fresh.consentStatus = record.consentStatus;
   fresh.consentTierAtDecision = record.consentTierAtDecision;
+  fresh.consentStatusChangedAt = record.consentStatusChangedAt;
+  fresh.workflowNote = record.workflowNote;
   await upsertClusters([fresh]);
   await appendHistoryIfChanged(prior, fresh, "auto-turnoff-decision", new Date().toISOString());
 }

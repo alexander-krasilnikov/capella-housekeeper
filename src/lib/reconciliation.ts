@@ -1,4 +1,4 @@
-import { turnOffCluster, deleteCluster, CapellaApiError } from "./capellaClient";
+import { turnOffCluster, deleteCluster, CapellaApiError, TRANSITIONAL_STATUS } from "./capellaClient";
 import { readClusters, getCluster, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
 import { computeRecordAgeStatus } from "./notifications";
@@ -69,28 +69,46 @@ interface NotifyTarget {
 }
 
 /**
- * Writes only `actionOutcome`, re-reading the cluster fresh right before
- * the write rather than upserting the whole record this pass started with.
- * turnOffCluster/deleteCluster can take up to 120s (see capellaClient.ts);
- * writing back the caller's full in-memory snapshot after a wait that long
- * would silently clobber any other field (including consent state) changed
- * elsewhere - by a sync cycle or a Slack click - during that window. Same
- * principle as sync.ts's guard around its own final upsertClusters call.
- * `notifyTarget` is passed through rather than read off `fresh` - see its
- * own comment. The Slack edit isn't awaited - its own failure is already
- * discarded and its result unused, so blocking the reconciliation loop's
- * next cluster on a Slack round trip buys nothing.
+ * Writes `actionOutcome` (and `workflowNote`), re-reading the cluster fresh
+ * right before the write rather than upserting the whole record this pass
+ * started with. turnOffCluster/deleteCluster can take up to 120s (see
+ * capellaClient.ts); writing back the caller's full in-memory snapshot after
+ * a wait that long would silently clobber any other field (including
+ * consent state) changed elsewhere - by a sync cycle or a Slack click -
+ * during that window. Same principle as sync.ts's guard around its own
+ * final upsertClusters call. `notifyTarget` is passed through rather than
+ * read off `fresh` - see its own comment. The Slack edit isn't awaited - its
+ * own failure is already discarded and its result unused, so blocking the
+ * reconciliation loop's next cluster on a Slack round trip buys nothing.
+ *
+ * `status`, when given, is written onto `config.status` alongside the
+ * outcome - Capella's own in-progress state for the action just performed
+ * (see capellaClient.ts's TRANSITIONAL_STATUS), not an assumed terminal
+ * state, since the Capella call's success only confirms it was accepted,
+ * not that the transition has finished. Only ever passed for a "performed"
+ * outcome - a skipped or failed pass leaves `config.status` untouched, per
+ * cluster-lifecycle-actions spec.
+ *
+ * `note`, when given, is written to `workflowNote` - the re-verification
+ * reason for a skip, or the underlying Capella error for a failure - per
+ * cluster-lifecycle-actions spec's persisted-explanation requirement.
+ * Omitted (cleared to null) for a "performed" outcome, which needs no
+ * explanation.
  */
 async function applyActionOutcome(
   clusterId: string,
   outcome: ConsentActionOutcome,
   settings: Settings,
   notifyTarget: NotifyTarget,
+  status?: string,
+  note?: string,
 ): Promise<void> {
   const fresh = await getCluster(clusterId);
   if (!fresh) return;
   const prior = { ...fresh };
   fresh.actionOutcome = outcome;
+  fresh.workflowNote = note ?? null;
+  if (status !== undefined) fresh.config = { ...fresh.config, status };
   await upsertClusters([fresh]);
   await appendHistoryIfChanged(prior, fresh, "reconciliation", new Date().toISOString());
   void notifyActionOutcome(notifyTarget, outcome, settings);
@@ -152,7 +170,14 @@ export async function runReconciliationPass(): Promise<ReconciliationResult> {
     const currentTier = computeRecordAgeStatus(record, settings, nowMs);
     if (currentTier !== record.consentTierAtDecision) {
       result.skipped += 1;
-      await applyActionOutcome(record.clusterId, "skipped", settings, notifyTarget);
+      await applyActionOutcome(
+        record.clusterId,
+        "skipped",
+        settings,
+        notifyTarget,
+        undefined,
+        "the cluster no longer warranted the action by the time of re-verification",
+      );
       continue;
     }
 
@@ -164,7 +189,14 @@ export async function runReconciliationPass(): Promise<ReconciliationResult> {
       // Org removed from settings since consent was granted - nothing to
       // authenticate the write with, and it won't reappear on retry.
       result.failed += 1;
-      await applyActionOutcome(record.clusterId, "failed", settings, notifyTarget);
+      await applyActionOutcome(
+        record.clusterId,
+        "failed",
+        settings,
+        notifyTarget,
+        undefined,
+        `${record.orgId} is no longer configured in Settings.`,
+      );
       continue;
     }
 
@@ -175,11 +207,13 @@ export async function runReconciliationPass(): Promise<ReconciliationResult> {
         await deleteCluster(org, settings.capellaApiBaseUrl, record.projectId, record.clusterId);
       }
       result.performed += 1;
-      await applyActionOutcome(record.clusterId, "performed", settings, notifyTarget);
+      const inProgressStatus =
+        record.consentStatus === "approved-turnoff" ? TRANSITIONAL_STATUS.turningOff : TRANSITIONAL_STATUS.destroying;
+      await applyActionOutcome(record.clusterId, "performed", settings, notifyTarget, inProgressStatus);
     } catch (err) {
       if (!(err instanceof CapellaApiError)) throw err;
       result.failed += 1;
-      await applyActionOutcome(record.clusterId, "failed", settings, notifyTarget);
+      await applyActionOutcome(record.clusterId, "failed", settings, notifyTarget, undefined, err.message);
     }
   }
 

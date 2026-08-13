@@ -166,6 +166,64 @@ export interface CapellaClusterConfig {
   currentState: string;
 }
 
+/**
+ * Every `currentState` value the v4 Management API's `CurrentState` enum
+ * defines, bucketed for display and for the honest in-progress values
+ * manual/reconciled actions write - see manual-cluster-actions and
+ * cluster-lifecycle-actions specs. Couchbase's own API reference page
+ * renders this enum client-side (not fetchable as static docs), so these
+ * are sourced from `internal/api/cluster/state.go` in
+ * couchbasecloud/terraform-provider-couchbase-capella, a client generated
+ * against this same v4 API. Deliberately not exhaustive of every value in
+ * that file - only the three buckets the dashboard treats as clean
+ * (active/transitioning/off) are listed; everything else (Capella's own
+ * failure/degraded states like "degraded" or "turningOffFailed", plus any
+ * value Capella adds later) falls through to "unknown" rather than being
+ * force-fit into one of the other three.
+ */
+const ACTIVE_STATES = new Set(["healthy"]);
+const TRANSITIONING_STATES = new Set([
+  "deploying",
+  "scaling",
+  "rebalancing",
+  "upgrading",
+  "peering",
+  "turningOff",
+  "turningOn",
+  "destroying",
+  "draft",
+]);
+const OFF_STATES = new Set(["turnedOff", "offline"]);
+
+export type ClusterStatusBucket = "active" | "transitioning" | "off" | "unknown";
+
+/**
+ * Classifies a raw `currentState` value into the bucket its status badge
+ * should render as - see StatusBadge in ClusterTable.tsx. `null` (status
+ * unavailable) is treated as active, matching cluster-sync's existing
+ * "status unavailable -> treated as active" behavior.
+ */
+export function classifyClusterStatus(status: string | null): ClusterStatusBucket {
+  if (status === null) return "active";
+  if (ACTIVE_STATES.has(status)) return "active";
+  if (TRANSITIONING_STATES.has(status)) return "transitioning";
+  if (OFF_STATES.has(status)) return "off";
+  return "unknown";
+}
+
+/**
+ * The exact `currentState` values Capella itself reports while a cluster is
+ * transitioning - written directly by manual and reconciled actions right
+ * after their Capella call succeeds, instead of assuming the terminal
+ * state before Capella has confirmed it. See manual-cluster-actions and
+ * cluster-lifecycle-actions specs.
+ */
+export const TRANSITIONAL_STATUS: Record<"turningOff" | "turningOn" | "destroying", string> = {
+  turningOff: "turningOff",
+  turningOn: "turningOn",
+  destroying: "destroying",
+};
+
 export async function listProjects(org: ApiCredential, apiBaseUrl: string): Promise<CapellaProject[]> {
   const res = await request<{ data: CapellaProject[] }>(
     org,

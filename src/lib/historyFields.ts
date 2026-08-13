@@ -1,6 +1,17 @@
 import { formatConfigSummary, formatStatusLabel } from "./configSummary";
 import { formatUsd } from "./format";
-import type { ClusterRecord, ConsentActionOutcome, ConsentStatus, HistoryTrigger } from "../types";
+import type { ClusterConfig, ClusterRecord, ConsentActionOutcome, ConsentStatus, HistoryTrigger } from "../types";
+
+/** `config`'s resource-shape fields only, excluding `status` (the cluster's operational state) - so a pure status transition (e.g. "Turned Off" -> "Turning Off") is tracked and described under the separate "status" HISTORY_FIELDS entry below, not folded into "Configuration" as if the resource shape itself had changed. */
+function configShapeSignature(config: ClusterConfig): string {
+  return JSON.stringify({
+    cloudProvider: config.cloudProvider,
+    region: config.region,
+    couchbaseVersion: config.couchbaseVersion,
+    nodeCount: config.nodeCount,
+    nodeSpec: config.nodeSpec,
+  });
+}
 
 export interface FieldChange {
   field: string;
@@ -30,8 +41,15 @@ const HISTORY_FIELDS: HistoryFieldSpec[] = [
     field: "config",
     label: "Configuration",
     lifecycle: false,
-    differs: (a, b) => JSON.stringify(a.config) !== JSON.stringify(b.config),
-    describe: (r) => `${formatConfigSummary(r.config)}, ${formatStatusLabel(r.config.status)}`,
+    differs: (a, b) => configShapeSignature(a.config) !== configShapeSignature(b.config),
+    describe: (r) => formatConfigSummary(r.config),
+  },
+  {
+    field: "status",
+    label: "Status",
+    lifecycle: false,
+    differs: (a, b) => a.config.status !== b.config.status,
+    describe: (r) => formatStatusLabel(r.config.status),
   },
   {
     field: "actualCost",
@@ -103,6 +121,20 @@ const HISTORY_FIELDS: HistoryFieldSpec[] = [
     differs: (a, b) => a.snoozeCount !== b.snoozeCount,
     describe: (r) => String(r.snoozeCount),
   },
+  {
+    field: "consentStatusChangedAt",
+    label: "Consent status changed",
+    lifecycle: true,
+    differs: (a, b) => a.consentStatusChangedAt !== b.consentStatusChangedAt,
+    describe: (r) => r.consentStatusChangedAt ?? "—",
+  },
+  {
+    field: "workflowNote",
+    label: "Workflow note",
+    lifecycle: true,
+    differs: (a, b) => a.workflowNote !== b.workflowNote,
+    describe: (r) => r.workflowNote ?? "—",
+  },
 ];
 
 const LIFECYCLE_FIELD_NAMES = new Set(HISTORY_FIELDS.filter((f) => f.lifecycle).map((f) => f.field));
@@ -153,6 +185,8 @@ export interface AuditLogEntry {
   /** The record's actual consent/action-outcome values at this entry - not just what changed this entry - so narration can say "Turned off" vs "Deleted" even on an entry where only actionOutcome moved. */
   consentStatus: ConsentStatus;
   actionOutcome: ConsentActionOutcome;
+  /** Persisted system-written explanation for this entry's consentStatus/actionOutcome, if one was recorded - see cluster-history-ui spec "History views state the system's own explanation when one was recorded". Null for owner-driven/manual/reset entries, and for entries recorded before this field existed. */
+  workflowNote: string | null;
   changes: FieldChange[];
 }
 
@@ -203,18 +237,26 @@ const TRIGGER_PHRASE: Record<HistoryTrigger, string> = {
  * to "none" in the very same entry, and it's that reset the consentStatus
  * branch narrates ("Consent cycle cleared"). Treating a reset-to-"none" as
  * an "action" would otherwise print the raw enum value.
+ *
+ * `entry.workflowNote`, when present, is appended after the generic
+ * trigger-derived phrase rather than replacing it - see cluster-history-ui
+ * spec "History views state the system's own explanation when one was
+ * recorded." Entries recorded before that field existed (or from an
+ * owner-driven/manual transition, which never sets it) simply have nothing
+ * to append.
  */
 export function describeAuditEntry(entry: AuditLogEntry): string {
   const trigger = TRIGGER_PHRASE[entry.trigger];
   const changedFields = new Set(entry.changes.map((c) => c.field));
+  const noteSuffix = entry.workflowNote ? ` (${entry.workflowNote})` : "";
 
   if (changedFields.has("actionOutcome") && entry.actionOutcome !== "none") {
     const action = entry.consentStatus === "approved-delete" ? "Delete" : "Turn-off";
     if (entry.actionOutcome === "performed") {
       return `${entry.consentStatus === "approved-delete" ? "Deleted" : "Turned off"} - ${trigger}`;
     }
-    if (entry.actionOutcome === "skipped") return `${action} skipped (tier changed) - ${trigger}`;
-    return `${action} failed - ${trigger}`;
+    if (entry.actionOutcome === "skipped") return `${action} skipped (tier changed) - ${trigger}${noteSuffix}`;
+    return `${action} failed - ${trigger}${noteSuffix}`;
   }
 
   if (changedFields.has("consentStatus")) {
@@ -232,7 +274,8 @@ export function describeAuditEntry(entry: AuditLogEntry): string {
               : entry.consentStatus === "expired"
                 ? "Request expired"
                 : "Consent cycle cleared";
-    return `${label} - ${trigger}`;
+    const suffix = entry.consentStatus === "approved-turnoff" && entry.trigger !== "slack-decision" ? noteSuffix : "";
+    return `${label} - ${trigger}${suffix}`;
   }
 
   if (changedFields.has("remindersSent")) return `Reminder sent - ${trigger}`;

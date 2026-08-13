@@ -73,10 +73,13 @@ export async function applyAutoTurnOffDecision(
   tier: AgeStatus,
   settings: Settings,
   reasonNote: string,
+  nowMs: number,
 ): Promise<void> {
   await supersedeLiveMessage(record, settings, `*${record.clusterName}*: Turned off automatically - ${reasonNote}.`);
   record.consentStatus = "approved-turnoff";
   record.consentTierAtDecision = tier;
+  record.consentStatusChangedAt = new Date(nowMs).toISOString();
+  record.workflowNote = reasonNote;
 }
 
 /** Sends (or re-sends, as a reminder) a tier notification. Returns false without throwing on any skip/failure - owner unresolvable, tokens unset, or the Slack send itself failing are all "didn't send," not errors. */
@@ -125,6 +128,8 @@ export async function applyConsentNotifications(
       record.lastNotifiedAgeStatus = tier;
       record.consentStatus = "none";
       record.consentCycleStartedAt = null;
+      record.consentStatusChangedAt = new Date(nowMs).toISOString();
+      record.workflowNote = null;
       record.remindersSent = 0;
       record.consentTierAtDecision = null;
       record.actionOutcome = "none";
@@ -139,6 +144,7 @@ export async function applyConsentNotifications(
         if (sent) {
           record.consentStatus = "pending";
           record.consentCycleStartedAt = new Date(nowMs).toISOString();
+          record.consentStatusChangedAt = new Date(nowMs).toISOString();
           record.consentTierAtDecision = tier;
         }
       }
@@ -163,12 +169,14 @@ export async function applyConsentNotifications(
         if (sent) {
           record.consentStatus = "pending";
           record.consentCycleStartedAt = new Date(nowMs).toISOString();
+          record.consentStatusChangedAt = new Date(nowMs).toISOString();
           record.consentTierAtDecision = tier;
           continue;
         }
       }
       record.consentStatus = "none";
       record.consentCycleStartedAt = null;
+      record.consentStatusChangedAt = new Date(nowMs).toISOString();
       continue;
     }
 
@@ -184,9 +192,16 @@ export async function applyConsentNotifications(
     if (ageMs >= expiryMs) {
       const tierConfig = resolveTierConfig(tier, settings);
       if (tier !== "In Use" && canAutoTurnOff(record, tierConfig)) {
-        await applyAutoTurnOffDecision(record, tier, settings, "no response was received within the configured window");
+        await applyAutoTurnOffDecision(
+          record,
+          tier,
+          settings,
+          "no response was received within the configured window",
+          nowMs,
+        );
       } else {
         record.consentStatus = "expired";
+        record.consentStatusChangedAt = new Date(nowMs).toISOString();
         await supersedeLiveMessage(record, settings, `Request expired for *${record.clusterName}* - no response received.`);
       }
       continue;
@@ -257,6 +272,8 @@ export async function sendManualConsentRequest(clusterId: string): Promise<Manua
   freshRecord.lastNotifiedAgeStatus = tier;
   freshRecord.consentStatus = "pending";
   freshRecord.consentCycleStartedAt = new Date(nowMs).toISOString();
+  freshRecord.consentStatusChangedAt = new Date(nowMs).toISOString();
+  freshRecord.workflowNote = null;
   freshRecord.remindersSent = 0;
   freshRecord.consentTierAtDecision = tier;
   freshRecord.actionOutcome = "none";

@@ -86,8 +86,10 @@ export interface ClusterRecord {
   lastNotifiedAgeStatus: AgeStatus | null;
   /** Where the current consent cycle (if any) stands - see cluster-consent-notifications spec. */
   consentStatus: ConsentStatus;
-  /** When the current consent cycle started, for expiry - null when consentStatus is "none". */
+  /** When the current consent cycle started, for expiry - null when consentStatus is "none". Anchors reminder/expiry timing only - see consentStatusChangedAt for a general "when did the current status last change" timestamp that doesn't affect that timing. */
   consentCycleStartedAt: string | null;
+  /** When `consentStatus` most recently changed, updated on every transition (including ones consentCycleStartedAt doesn't touch, like entering snoozed or expiring) - display-only, for "since when has this been snoozed/approved/expired" in the dashboard/audit log. Never read by reminder/expiry logic. */
+  consentStatusChangedAt: string | null;
   /** Reminder re-sends issued so far in the current consent cycle. */
   remindersSent: number;
   /** The age-status tier active when consent was granted - re-checked by the reconciliation loop before acting. */
@@ -103,6 +105,8 @@ export interface ClusterRecord {
   snoozeJustification: string | null;
   /** Snoozes recorded since the last tier transition - deliberately survives a snoozed cycle resuming (unlike remindersSent), so a tier's configured maxSnoozes is enforced across the whole tier, not reset by every individual snooze ending. */
   snoozeCount: number;
+  /** Free-text explanation for the current consentStatus/actionOutcome, written only when the *system* (not the owner or an operator) drove the transition - an auto-turnoff's reason, a reconciliation skip's reason, or a Capella failure's error text. Single-valued and system-written: overwritten by the next system-driven transition, cleared (null) by any owner-driven, manual, or reset transition. Null when there's nothing to explain. */
+  workflowNote: string | null;
 }
 
 /** What caused a history entry to be written - narration-only, see cluster-sync spec "History entries are written at the moment a mutation occurs". */

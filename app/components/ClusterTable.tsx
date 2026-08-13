@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   createColumnHelper,
   flexRender,
@@ -25,6 +25,7 @@ import ClusterHistoryButton from "./ClusterHistoryButton";
 import RefreshButton from "./RefreshButton";
 import FormattedDateTime, { formatDateTime } from "./FormattedDateTime";
 import type { AgeStatus, ConsentActionOutcome, ConsentStatus } from "@/types";
+import type { ClusterStatusBucket } from "@/lib/capellaClient";
 
 declare module "@tanstack/react-table" {
   interface ColumnMeta<TData, TValue> {
@@ -75,6 +76,7 @@ export interface ClusterRow {
   actualCostAsOfMs: number | null;
   actualCostUnavailableReason: "credits-based" | "no-access" | "error" | null;
   statusLabel: string;
+  statusBucket: ClusterStatusBucket;
   statusIsOff: boolean;
   ownerEligibleForAsk: boolean;
   ageStatus: AgeStatus;
@@ -82,6 +84,10 @@ export interface ClusterRow {
   actionOutcome: ConsentActionOutcome;
   snoozeUntilMs: number | null;
   snoozeJustification: string | null;
+  /** When `consentStatus` last changed - null when it never has (a cluster synced before this field existed, or one that's never left "none"). Display-only; see types.ts's ClusterRecord.consentStatusChangedAt. */
+  consentStatusChangedAtMs: number | null;
+  /** Persisted system-written explanation for the current consentStatus/actionOutcome, if one was recorded - see types.ts's ClusterRecord.workflowNote. */
+  workflowNote: string | null;
   lastSyncedAtMs: number;
 }
 
@@ -104,7 +110,11 @@ const DETAIL_GROUP_BY_COLUMN_ID: Record<string, DetailGroup> = {
   status: "Cluster",
   ageStatus: "Cluster",
   consent: "Workflow",
+  statusSince: "Workflow",
+  snoozeUntil: "Workflow",
+  snoozeJustification: "Workflow",
   action: "Workflow",
+  workflowNote: "Workflow",
 };
 
 const ACTUAL_COST_UNAVAILABLE_LABEL: Record<"credits-based" | "no-access" | "error", string> = {
@@ -119,11 +129,8 @@ function actualCostDisplayLabel(row: ClusterRow): string {
   return "—";
 }
 
-/** Combines consentStatus and actionOutcome into one label+color - e.g. a "pending" decision reads differently from an "approved-turnoff" that's already been "performed" vs. merely "failed" and awaiting retry. */
-function describeConsent(
-  status: ConsentStatus,
-  outcome: ConsentActionOutcome,
-): { label: string; text: string; dot: string } {
+/** Describes only the consent decision itself (pending/approved/snoozed/expired/none) - the outcome of acting on it lives in describeActionOutcome below, rendered in the Action column instead of folded in here. */
+function describeConsent(status: ConsentStatus): { label: string; text: string; dot: string } {
   if (status === "none") {
     return { label: "—", text: "text-ink-faint", dot: "bg-slate-300 dark:bg-slate-600" };
   }
@@ -143,9 +150,36 @@ function describeConsent(
   }
 
   const actionLabel = status === "approved-turnoff" ? "Turn off" : "Delete";
+  return { label: `Approved: ${actionLabel}`, text: "text-blue-600 dark:text-blue-400", dot: "bg-blue-500" };
+}
+
+function ConsentBadge({ status }: { status: ConsentStatus }) {
+  const style = describeConsent(status);
+  if (status === "none") return <span className={style.text}>{style.label}</span>;
+  return (
+    <span className={`inline-flex items-center gap-1.5 ${style.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+      {style.label}
+    </span>
+  );
+}
+
+/**
+ * Describes the outcome (if any) of the reconciliation loop acting on an
+ * approved consent decision - a persistent signal, independent of the
+ * Consent badge above, and independent of a manual button's own ephemeral
+ * per-click result message rendered alongside it in the Action column. Null
+ * when there's nothing to report yet (`actionOutcome` is "none").
+ */
+function describeActionOutcome(
+  status: ConsentStatus,
+  outcome: ConsentActionOutcome,
+): { label: string; text: string; dot: string } | null {
+  if (outcome === "none") return null;
+  const actionLabel = status === "approved-delete" ? "Delete" : "Turn off";
   if (outcome === "performed") {
     return {
-      label: status === "approved-turnoff" ? "Turned off" : "Deleted",
+      label: status === "approved-delete" ? "Deleted" : "Turned off",
       text: "text-emerald-600 dark:text-emerald-400",
       dot: "bg-emerald-500",
     };
@@ -153,17 +187,14 @@ function describeConsent(
   if (outcome === "skipped") {
     return { label: `${actionLabel} skipped`, text: "text-ink-muted", dot: "bg-slate-400" };
   }
-  if (outcome === "failed") {
-    return { label: `${actionLabel} failed`, text: "text-rose-600 dark:text-rose-400", dot: "bg-rose-500" };
-  }
-  return { label: `Approved: ${actionLabel}`, text: "text-blue-600 dark:text-blue-400", dot: "bg-blue-500" };
+  return { label: `${actionLabel} failed`, text: "text-rose-600 dark:text-rose-400", dot: "bg-rose-500" };
 }
 
-function ConsentBadge({ status, outcome }: { status: ConsentStatus; outcome: ConsentActionOutcome }) {
-  const style = describeConsent(status, outcome);
-  if (status === "none") return <span className={style.text}>{style.label}</span>;
+function ActionOutcomeBadge({ status, outcome }: { status: ConsentStatus; outcome: ConsentActionOutcome }) {
+  const style = describeActionOutcome(status, outcome);
+  if (!style) return null;
   return (
-    <span className={`inline-flex items-center gap-1.5 ${style.text}`}>
+    <span className={`inline-flex items-center gap-1.5 text-xs ${style.text}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
       {style.label}
     </span>
@@ -191,8 +222,10 @@ const globalFuzzyFilter: FilterFn<ClusterRow> = (row, _columnId, filterValue) =>
     r.configSummary,
     actualCostDisplayLabel(r),
     r.statusLabel,
-    describeConsent(r.consentStatus, r.actionOutcome).label,
+    describeConsent(r.consentStatus).label,
+    describeActionOutcome(r.consentStatus, r.actionOutcome)?.label ?? "",
     r.snoozeJustification ?? "",
+    r.workflowNote ?? "",
   ]
     .join(" ")
     .toLowerCase();
@@ -267,7 +300,7 @@ const columns = [
     id: "status",
     header: "Status",
     meta: { widthPct: 6 },
-    cell: (info) => <StatusBadge statusLabel={info.getValue()} />,
+    cell: (info) => <StatusBadge statusLabel={info.getValue()} statusBucket={info.row.original.statusBucket} />,
   }),
   columnHelper.accessor("ageStatus", {
     id: "ageStatus",
@@ -280,7 +313,40 @@ const columns = [
     id: "consent",
     header: "Consent",
     meta: { widthPct: 9 },
-    cell: (info) => <ConsentBadge status={info.getValue()} outcome={info.row.original.actionOutcome} />,
+    cell: (info) => <ConsentBadge status={info.getValue()} />,
+  }),
+  columnHelper.accessor("consentStatusChangedAtMs", {
+    id: "statusSince",
+    header: "Status Since",
+    meta: { widthPct: 8 },
+    sortingFn: (a, b) => (a.original.consentStatusChangedAtMs ?? -Infinity) - (b.original.consentStatusChangedAtMs ?? -Infinity),
+    cell: (info) => {
+      const ms = info.getValue();
+      const hasActiveCycle = info.row.original.consentStatus !== "none";
+      if (ms === null || !hasActiveCycle) return <span className="text-ink-faint">—</span>;
+      return <FormattedDateTime ms={ms} />;
+    },
+  }),
+  columnHelper.accessor("snoozeUntilMs", {
+    id: "snoozeUntil",
+    header: "Snooze Until",
+    meta: { widthPct: 8 },
+    sortingFn: (a, b) => (a.original.snoozeUntilMs ?? -Infinity) - (b.original.snoozeUntilMs ?? -Infinity),
+    cell: (info) => {
+      const ms = info.getValue();
+      if (ms === null) return <span className="text-ink-faint">—</span>;
+      return <FormattedDateTime ms={ms} />;
+    },
+  }),
+  columnHelper.accessor("snoozeJustification", {
+    id: "snoozeJustification",
+    header: "Snooze Reason",
+    meta: { widthPct: 10 },
+    cell: (info) => {
+      const reason = info.getValue();
+      if (!reason) return <span className="text-ink-faint">—</span>;
+      return <span className="break-words italic text-ink-muted">"{reason}"</span>;
+    },
   }),
   columnHelper.display({
     id: "action",
@@ -317,6 +383,7 @@ const columns = [
             <ManualDeleteButton clusterId={clusterId} clusterName={info.row.original.name} onResult={onResult} />
             <ClusterHistoryButton clusterId={clusterId} clusterName={info.row.original.name} />
           </span>
+          <ActionOutcomeBadge status={info.row.original.consentStatus} outcome={info.row.original.actionOutcome} />
           {actionResult && (
             <span
               className={`break-words text-xs ${actionResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
@@ -328,16 +395,30 @@ const columns = [
       );
     },
   }),
+  columnHelper.accessor("workflowNote", {
+    id: "workflowNote",
+    header: "Workflow Note",
+    meta: { widthPct: 12 },
+    cell: (info) => {
+      const note = info.getValue();
+      if (!note) return <span className="text-ink-faint">—</span>;
+      return <span className="break-words text-ink-muted">{note}</span>;
+    },
+  }),
 ];
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 /**
  * Columns shown before an operator customizes anything - a lean, at-a-glance
- * set (identity, activity, and status), with everything else (org/project
- * scoping, raw dates, configuration detail, cost, and the Action buttons)
+ * set (identity, activity, status, and the Action column) with everything
+ * else (org/project scoping, raw dates, configuration detail, cost)
  * available via the Columns panel or a row's detail panel rather than
- * cluttering the default view.
+ * cluttering the default view. Action is included by default (unlike the
+ * other columns it groups with logically) because it now carries a
+ * persistent action-outcome badge, not just an ephemeral per-click message -
+ * a failed automatic turn-off/delete shouldn't be invisible to an operator
+ * who hasn't customized columns.
  */
 const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
   org: false,
@@ -346,7 +427,10 @@ const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
   age: false,
   config: false,
   actualCost: false,
-  action: false,
+  statusSince: false,
+  snoozeUntil: false,
+  snoozeJustification: false,
+  workflowNote: false,
 };
 
 /** Left-to-right order matching the default visible set above; hidden columns trail in their original logical grouping. */
@@ -365,6 +449,10 @@ const DEFAULT_COLUMN_ORDER = [
   "config",
   "actualCost",
   "action",
+  "statusSince",
+  "snoozeUntil",
+  "snoozeJustification",
+  "workflowNote",
 ];
 
 const STORAGE_KEY = "capella-housekeeper:table-config:v1";
@@ -400,8 +488,22 @@ export default function ClusterTable({
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [detailOpenIds, setDetailOpenIds] = useState<Set<string>>(new Set());
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
+  const columnsPanelRef = useRef<HTMLDivElement>(null);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [actionResults, setActionResults] = useState<Record<string, { ok: boolean; message: string } | null>>({});
+
+  // Closes the Columns panel on an outside click - only listens while it's
+  // actually open, so this adds no overhead to every other render.
+  useEffect(() => {
+    if (!columnsPanelOpen) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (columnsPanelRef.current && !columnsPanelRef.current.contains(event.target as Node)) {
+        setColumnsPanelOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [columnsPanelOpen]);
 
   // Restore persisted column visibility/order/sort/page-size once on mount.
   // Reading localStorage during render would break server/client hydration,
@@ -412,7 +514,17 @@ export default function ClusterTable({
     const persisted = loadPersistedConfig();
     if (persisted.sorting) setSorting(persisted.sorting);
     if (persisted.columnOrder) setColumnOrder(persisted.columnOrder);
-    if (persisted.columnVisibility) setColumnVisibility(persisted.columnVisibility);
+    // Merged under DEFAULT_COLUMN_VISIBILITY, not used verbatim - a column
+    // added after an operator's config was already saved is absent from
+    // their persisted blob, and TanStack treats an absent key as visible.
+    // Without this merge, every column added later than someone's last visit
+    // would default to shown for them, regardless of this app's own default
+    // for it (e.g. the new workflow columns, meant to start hidden for
+    // everyone). Persisted keys still win over the default when present -
+    // this only fills in what the operator never explicitly decided.
+    if (persisted.columnVisibility) {
+      setColumnVisibility({ ...DEFAULT_COLUMN_VISIBILITY, ...persisted.columnVisibility });
+    }
     if (persisted.pageSize) setPagination((p) => ({ ...p, pageSize: persisted.pageSize! }));
     setConfigLoaded(true);
   }, []);
@@ -478,7 +590,12 @@ export default function ClusterTable({
 
   function moveColumn(columnId: string, direction: -1 | 1) {
     setColumnOrder((old) => {
-      const order = old.length > 0 ? [...old] : table.getAllLeafColumns().map((c) => c.id);
+      // Same missing-column fallback as orderedColumnsForPanel below - without
+      // it, moving a column absent from a stale persisted order (e.g. one
+      // added to the app after this operator's last visit) would silently
+      // no-op, since `order.indexOf(columnId)` returns -1 for it.
+      const allIds = table.getAllLeafColumns().map((c) => c.id);
+      const order = old.length > 0 ? [...old, ...allIds.filter((id) => !old.includes(id))] : allIds;
       const idx = order.indexOf(columnId);
       const newIdx = idx + direction;
       if (newIdx <= 0 || newIdx >= order.length) return order;
@@ -507,8 +624,20 @@ export default function ClusterTable({
     return (weight / totalWeight) * 100;
   }
 
+  // A column added to the app after an operator already has a persisted
+  // columnOrder in localStorage (see STORAGE_KEY) is absent from that saved
+  // array - without this fallback, such a column would render in the grid
+  // (TanStack itself appends any column missing from state.columnOrder) but
+  // never appear in this panel at all, since the panel is built strictly
+  // from the array below rather than every known column. Appending anything
+  // missing keeps a stale persisted order still complete, without forcing
+  // every operator's saved column customization to reset.
+  const allLeafColumnIds = table.getAllLeafColumns().map((c) => c.id);
+  const knownColumnIds = new Set(columnOrder);
   const currentColumnOrder =
-    columnOrder.length > 0 ? columnOrder : table.getAllLeafColumns().map((c) => c.id);
+    columnOrder.length > 0
+      ? [...columnOrder, ...allLeafColumnIds.filter((id) => !knownColumnIds.has(id))]
+      : allLeafColumnIds;
   const orderedColumnsForPanel = currentColumnOrder
     .filter((id) => id !== "expander")
     .map((id) => table.getColumn(id))
@@ -574,7 +703,7 @@ export default function ClusterTable({
           })}
         </div>
 
-        <div className="relative">
+        <div className="relative" ref={columnsPanelRef}>
           <button
             type="button"
             onClick={() => setColumnsPanelOpen((o) => !o)}
@@ -722,9 +851,7 @@ export default function ClusterTable({
                                 );
                               });
 
-                            const hasSnooze =
-                              row.original.snoozeUntilMs !== null || row.original.snoozeJustification !== null;
-                            const isEmpty = group === "Workflow" && !hasSnooze && hiddenFieldsForGroup.length === 0;
+                            const isEmpty = group === "Workflow" && hiddenFieldsForGroup.length === 0;
 
                             return (
                               <div key={group} className="sm:first:pl-0 sm:[&:not(:first-child)]:pl-4">
@@ -769,23 +896,6 @@ export default function ClusterTable({
                                         </dd>
                                       </div>
                                     </>
-                                  )}
-                                  {group === "Workflow" && hasSnooze && (
-                                    <div>
-                                      <dt className="text-ink-faint">Snooze</dt>
-                                      <dd className="text-ink-muted">
-                                        {row.original.snoozeUntilMs !== null && (
-                                          <div>
-                                            Until <FormattedDateTime ms={row.original.snoozeUntilMs} />
-                                          </div>
-                                        )}
-                                        {row.original.snoozeJustification && (
-                                          <div className="break-words italic">
-                                            "{row.original.snoozeJustification}"
-                                          </div>
-                                        )}
-                                      </dd>
-                                    </div>
                                   )}
                                   {isEmpty && <p className="text-ink-faint">—</p>}
                                   {hiddenFieldsForGroup}
@@ -849,20 +959,20 @@ export default function ClusterTable({
   );
 }
 
-function StatusBadge({ statusLabel }: { statusLabel: string }) {
-  const isOff = /off/i.test(statusLabel);
-  const isActive = statusLabel === "Active" || /healthy|running|ready/i.test(statusLabel);
+/** Color (and, for "transitioning", animation) per operational-status bucket - keyed on Capella's own currentState value via classifyClusterStatus, not the display label, so e.g. "Turning Off" and "Turned Off" never collide on one color. */
+const STATUS_BUCKET_STYLE: Record<ClusterStatusBucket, { text: string; dot: string; animate?: boolean }> = {
+  active: { text: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
+  transitioning: { text: "text-blue-600 dark:text-blue-400", dot: "bg-blue-500", animate: true },
+  off: { text: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
+  unknown: { text: "text-ink-muted", dot: "bg-slate-400" },
+};
 
-  const colorClass = isOff
-    ? "text-amber-600 dark:text-amber-400"
-    : isActive
-      ? "text-emerald-600 dark:text-emerald-400"
-      : "text-ink-muted";
-  const dotClass = isOff ? "bg-amber-500" : isActive ? "bg-emerald-500" : "bg-slate-400";
+function StatusBadge({ statusLabel, statusBucket }: { statusLabel: string; statusBucket: ClusterStatusBucket }) {
+  const style = STATUS_BUCKET_STYLE[statusBucket];
 
   return (
-    <span className={`inline-flex items-center gap-1.5 ${colorClass}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
+    <span className={`inline-flex items-center gap-1.5 ${style.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${style.dot} ${style.animate ? "animate-pulse" : ""}`} />
       {statusLabel}
     </span>
   );

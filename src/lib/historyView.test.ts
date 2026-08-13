@@ -49,6 +49,8 @@ function makeRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
     snoozeUntil: null,
     snoozeJustification: null,
     snoozeCount: 0,
+    consentStatusChangedAt: null,
+    workflowNote: null,
     ...overrides,
   };
 }
@@ -112,6 +114,22 @@ describe("getLifecycleAuditLog", () => {
     expect(log.map((e) => e.takenAt)).toEqual(["2026-01-03T00:00:00.000Z", "2026-01-02T00:00:00.000Z"]);
   });
 
+  it("carries the record's persisted workflowNote onto the audit entry", async () => {
+    await appendHistory([
+      snapshot({ record: makeRecord({ consentStatus: "pending" }), takenAt: "2026-01-01T00:00:00.000Z" }),
+      snapshot({
+        record: makeRecord({
+          consentStatus: "approved-turnoff",
+          workflowNote: "no response was received within the configured window",
+        }),
+        takenAt: "2026-01-02T00:00:00.000Z",
+      }),
+    ]);
+    const log = await getLifecycleAuditLog();
+    const entry = log.find((e) => e.takenAt === "2026-01-02T00:00:00.000Z");
+    expect(entry?.workflowNote).toBe("no response was received within the configured window");
+  });
+
   it("includes a deleted cluster's lifecycle entries (no join against live clusters.json)", async () => {
     await appendHistory([
       snapshot({ record: makeRecord({ clusterId: "gone", consentStatus: "none" }), takenAt: "2026-01-01T00:00:00.000Z" }),
@@ -140,6 +158,7 @@ function makeAuditEntry(overrides: Partial<Parameters<typeof describeAuditEntry>
     trigger: "sync",
     consentStatus: "none",
     actionOutcome: "none",
+    workflowNote: null,
     changes: [],
     ...overrides,
   };
@@ -187,6 +206,56 @@ describe("describeAuditEntry", () => {
       }),
     );
     expect(text).toBe("Auto turn-off triggered - snooze limit reached");
+  });
+
+  it("appends the persisted workflowNote to an auto-triggered turn-off, but not to an owner's own Slack approval", () => {
+    const auto = describeAuditEntry(
+      makeAuditEntry({
+        trigger: "sync",
+        consentStatus: "approved-turnoff",
+        workflowNote: "no response was received within the configured window",
+        changes: [{ field: "consentStatus", label: "Consent status", from: "pending", to: "approved-turnoff" }],
+      }),
+    );
+    expect(auto).toBe(
+      "Auto turn-off triggered - detected during sync (no response was received within the configured window)",
+    );
+
+    const ownerClick = describeAuditEntry(
+      makeAuditEntry({
+        trigger: "slack-decision",
+        consentStatus: "approved-turnoff",
+        workflowNote: null,
+        changes: [{ field: "consentStatus", label: "Consent status", from: "pending", to: "approved-turnoff" }],
+      }),
+    );
+    expect(ownerClick).toBe("Owner approved turn-off - via Slack");
+  });
+
+  it("appends the persisted workflowNote to a skipped or failed reconciliation outcome", () => {
+    const skipped = describeAuditEntry(
+      makeAuditEntry({
+        trigger: "reconciliation",
+        consentStatus: "approved-turnoff",
+        actionOutcome: "skipped",
+        workflowNote: "the cluster no longer warranted the action by the time of re-verification",
+        changes: [{ field: "actionOutcome", label: "Action outcome", from: "none", to: "skipped" }],
+      }),
+    );
+    expect(skipped).toBe(
+      "Turn-off skipped (tier changed) - reconciliation (the cluster no longer warranted the action by the time of re-verification)",
+    );
+
+    const failed = describeAuditEntry(
+      makeAuditEntry({
+        trigger: "reconciliation",
+        consentStatus: "approved-delete",
+        actionOutcome: "failed",
+        workflowNote: "500: internal error",
+        changes: [{ field: "actionOutcome", label: "Action outcome", from: "none", to: "failed" }],
+      }),
+    );
+    expect(failed).toBe("Delete failed - reconciliation (500: internal error)");
   });
 
   it("narrates a reconciliation-performed turn-off using the record's current consentStatus, not the raw actionOutcome delta", () => {

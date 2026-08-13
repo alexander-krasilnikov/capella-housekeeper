@@ -18,6 +18,7 @@ import {
   appendHistory,
   purgeExpiredHistory,
   historyEntriesDiffer,
+  getLatestHistoryEntry,
 } from "./store";
 import { computeFieldChanges, isLifecycleChange } from "./historyFields";
 import { readSettings } from "./settings";
@@ -144,7 +145,9 @@ function consentFieldsEqual(a: ClusterRecord, b: ClusterRecord): boolean {
     a.slackMessageTs === b.slackMessageTs &&
     a.snoozeUntil === b.snoozeUntil &&
     a.snoozeJustification === b.snoozeJustification &&
-    a.snoozeCount === b.snoozeCount
+    a.snoozeCount === b.snoozeCount &&
+    a.consentStatusChangedAt === b.consentStatusChangedAt &&
+    a.workflowNote === b.workflowNote
   );
 }
 
@@ -160,6 +163,8 @@ function adoptConsentFields(record: ClusterRecord, source: ClusterRecord): void 
   record.snoozeUntil = source.snoozeUntil;
   record.snoozeJustification = source.snoozeJustification;
   record.snoozeCount = source.snoozeCount;
+  record.consentStatusChangedAt = source.consentStatusChangedAt;
+  record.workflowNote = source.workflowNote;
 }
 
 export interface SyncResult {
@@ -304,6 +309,8 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
           snoozeUntil: existing?.snoozeUntil ?? null,
           snoozeJustification: existing?.snoozeJustification ?? null,
           snoozeCount: existing?.snoozeCount ?? 0,
+          consentStatusChangedAt: existing?.consentStatusChangedAt ?? null,
+          workflowNote: existing?.workflowNote ?? null,
         };
 
         records.push(record);
@@ -371,22 +378,33 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
     });
   }
 
-  // Gated against the freshest available prior state (freshExisting, falling
-  // back to the top-of-cycle existingById for a brand-new cluster that isn't
-  // in either), not blindly appended - see cluster-sync spec "Cluster record
-  // persistence" and design.md's note on why this must be freshExisting: a
-  // Slack click or reconciliation outcome landing mid-cycle already wrote its
-  // own history entry the moment it happened, and gating against the stale
-  // existingById snapshot here would silently duplicate it.
-  // isLifecycleChange is computed here, at write time, from the same `prior`
-  // used for the historyEntriesDiffer gate above - not re-derived later on
-  // every audit-log read. See cluster-history-ui spec "Cross-cluster
-  // lifecycle audit log" and design.md Decision 7.
-  const changedSnapshots = snapshots.flatMap((snapshot) => {
-    const prior = freshExisting.get(snapshot.clusterId) ?? existingById.get(snapshot.clusterId) ?? null;
-    if (prior && !historyEntriesDiffer(prior, snapshot.record)) return [];
-    return [{ ...snapshot, isLifecycleChange: isLifecycleChange(computeFieldChanges(prior, snapshot.record)) }];
-  });
+  // Gated against the last *stored* history entry for the cluster, not the
+  // live `clusters` table row - the two aren't always the same thing. A
+  // manual action, a Slack decision, or the reconciliation loop can write to
+  // the live table mid-cycle (freshExisting/existingById reflect whichever
+  // of those happened to land, at whatever moment they were read) and then a
+  // *later* write can move it right back to what was already recorded,
+  // netting out to no real change - but gating against that live snapshot
+  // instead of the actual last stored row let each of those individually
+  // "differing" writes through, producing a history entry that displays as
+  // "No change recorded" the moment anyone reads it back (computeFieldChanges
+  // always diffs against the last *stored* row - see cluster-history-ui
+  // spec). Gating on the same thing the display diffs against makes the two
+  // agree by construction. Falls back to freshExisting/existingById only
+  // when there's no stored history at all yet (a genuinely brand-new
+  // cluster) - see cluster-sync spec "Cluster record persistence".
+  // isLifecycleChange is computed here, at write time, from this same
+  // `prior` - not re-derived later on every audit-log read. See
+  // cluster-history-ui spec "Cross-cluster lifecycle audit log" and
+  // design.md Decision 7.
+  const changedSnapshots: ClusterSnapshot[] = [];
+  for (const snapshot of snapshots) {
+    const storedPrior = await getLatestHistoryEntry(snapshot.clusterId);
+    const prior =
+      storedPrior?.record ?? freshExisting.get(snapshot.clusterId) ?? existingById.get(snapshot.clusterId) ?? null;
+    if (prior && !historyEntriesDiffer(prior, snapshot.record)) continue;
+    changedSnapshots.push({ ...snapshot, isLifecycleChange: isLifecycleChange(computeFieldChanges(prior, snapshot.record)) });
+  }
 
   await upsertClusters(records);
   await removeClusters(removedClusterIds);

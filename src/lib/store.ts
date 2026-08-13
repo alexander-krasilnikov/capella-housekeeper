@@ -45,6 +45,8 @@ export function clusterRecordToRow(record: ClusterRecord): ClusterRow {
     snoozeUntilMs: toEpochMs(record.snoozeUntil),
     snoozeJustification: record.snoozeJustification,
     snoozeCount: record.snoozeCount,
+    consentStatusChangedAtMs: toEpochMs(record.consentStatusChangedAt),
+    workflowNote: record.workflowNote,
   };
 }
 
@@ -89,6 +91,8 @@ export function rowToClusterRecord(row: ClusterRow): ClusterRecord {
     snoozeUntil: fromEpochMs(row.snoozeUntilMs as number | null),
     snoozeJustification: row.snoozeJustification as string | null,
     snoozeCount: row.snoozeCount as number,
+    consentStatusChangedAt: fromEpochMs(row.consentStatusChangedAtMs as number | null),
+    workflowNote: (row.workflowNote as string | null | undefined) ?? null,
   };
 }
 
@@ -253,6 +257,23 @@ export async function getLifecycleHistoryEntries(): Promise<ClusterSnapshot[]> {
 export async function getPreviousHistoryEntry(clusterId: string, beforeTakenAt: string): Promise<ClusterSnapshot | null> {
   const db = getDb();
   const row = previousHistoryRow(db, clusterId, toEpochMs(beforeTakenAt) as number);
+  return row ? historyRowToSnapshot(row) : null;
+}
+
+/**
+ * The most recently stored entry for a cluster, unconditionally (no cutoff) -
+ * null if it has no history yet. Used by sync.ts to gate a new append
+ * against the same "prior" the per-cluster timeline will actually diff
+ * against at read time (see historyFields.ts's HISTORY_FIELDS comment on
+ * why the gate and the display must share one notion of prior), instead of
+ * the live `clusters` table row, which a concurrent writer (a manual
+ * action, a Slack decision, the reconciliation loop) can transiently
+ * diverge from mid-cycle in ways that net out to no real change once both
+ * writes land - see sync.ts's own comment at its call site.
+ */
+export async function getLatestHistoryEntry(clusterId: string): Promise<ClusterSnapshot | null> {
+  const db = getDb();
+  const row = previousHistoryRow(db, clusterId);
   return row ? historyRowToSnapshot(row) : null;
 }
 

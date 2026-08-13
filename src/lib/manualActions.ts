@@ -1,4 +1,4 @@
-import { turnOffCluster, turnOnCluster, deleteCluster, CapellaApiError } from "./capellaClient";
+import { turnOffCluster, turnOnCluster, deleteCluster, CapellaApiError, TRANSITIONAL_STATUS } from "./capellaClient";
 import { getCluster, upsertClusters, removeClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
 import { supersedeLiveMessage } from "./notifications";
@@ -48,6 +48,14 @@ async function resolveClusterAndOrg(
 }
 
 interface PowerDirectionConfig {
+  /**
+   * Capella's own in-progress state for this direction (see
+   * capellaClient.ts's TRANSITIONAL_STATUS) - written immediately after the
+   * Capella call succeeds, not the direction's terminal state, since
+   * Capella's 202 response confirms nothing about whether the transition
+   * has actually finished. A later sync cycle overwrites this with
+   * whatever Capella reports once it has.
+   */
   status: string;
   /** Lowercase, for error text - "Couldn't turn on/off ...". */
   verb: string;
@@ -64,24 +72,28 @@ interface PowerDirectionConfig {
    * reconciliation loop would then re-verify against age/activity alone
    * (it never looks at power state) and act on again, silently reversing
    * the operator's own turn-on within one reconciliation pass. Turning off
-   * or deleting has no equivalent problem - re-doing an already-terminal
-   * action is harmless, and consent intent already agrees with the action.
+   * has the equivalent problem in the other direction: a pending/snoozed/
+   * approved cycle left in place after a manual turn-off keeps reminding
+   * (or, for an approved-delete decision, would eventually still delete) a
+   * cluster an operator already turned off with no fresh consent behind it -
+   * so both directions reset, per manual-cluster-actions spec "Manual
+   * turn-off and turn-on clear any active consent cycle."
    */
   resetConsentCycle: boolean;
 }
 
 const POWER_DIRECTIONS: Record<"on" | "off", PowerDirectionConfig> = {
   off: {
-    status: "turnedOff",
+    status: TRANSITIONAL_STATUS.turningOff,
     verb: "turn off",
     pastTense: "Turned off",
     supersedeNoun: "turn-off",
     trigger: "manual-turn-off",
     capellaCall: turnOffCluster,
-    resetConsentCycle: false,
+    resetConsentCycle: true,
   },
   on: {
-    status: "healthy",
+    status: TRANSITIONAL_STATUS.turningOn,
     verb: "turn on",
     pastTense: "Turned on",
     supersedeNoun: "turn-on",
@@ -131,6 +143,8 @@ async function setClusterPower(clusterId: string, direction: "on" | "off"): Prom
     if (config.resetConsentCycle) {
       fresh.consentStatus = "none";
       fresh.consentCycleStartedAt = null;
+      fresh.consentStatusChangedAt = new Date().toISOString();
+      fresh.workflowNote = null;
       fresh.remindersSent = 0;
       fresh.consentTierAtDecision = null;
       fresh.actionOutcome = "none";

@@ -13,6 +13,7 @@ export interface HistoryTimelineEntry {
   takenAt: string;
   trigger: HistoryTrigger;
   clusterName: string;
+  /** Includes a "Workflow note" entry whenever workflowNote changed - no separate field needed, the generic diff already surfaces the persisted explanation (see historyFields.ts's HISTORY_FIELDS). */
   changes: FieldChange[];
 }
 
@@ -74,6 +75,7 @@ export async function getLifecycleAuditLog(): Promise<AuditLogEntry[]> {
       trigger: snapshot.trigger ?? "sync",
       consentStatus: snapshot.record.consentStatus,
       actionOutcome: snapshot.record.actionOutcome,
+      workflowNote: snapshot.record.workflowNote,
       changes: computeFieldChanges(prior?.record ?? null, snapshot.record),
     });
   }

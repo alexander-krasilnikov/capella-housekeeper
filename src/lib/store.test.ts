@@ -52,6 +52,8 @@ function makeRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
     snoozeUntil: null,
     snoozeJustification: null,
     snoozeCount: 0,
+    consentStatusChangedAt: null,
+    workflowNote: null,
     ...overrides,
   };
 }
