@@ -146,11 +146,11 @@ function describeConsent(status: ConsentStatus): { label: string; text: string; 
     // server and client without a hydration mismatch. The exact
     // snooze-until date is shown in the row's detail panel instead, via
     // FormattedDateTime, same as every other date in this table.
-    return { label: "Snoozed", text: "text-blue-600 dark:text-blue-400", dot: "bg-blue-500" };
+    return { label: "Snoozed", text: "text-violet-600 dark:text-violet-400", dot: "bg-violet-500" };
   }
 
   const actionLabel = status === "approved-turnoff" ? "Turn off" : "Delete";
-  return { label: `Approved: ${actionLabel}`, text: "text-blue-600 dark:text-blue-400", dot: "bg-blue-500" };
+  return { label: `Approved: ${actionLabel}`, text: "text-violet-600 dark:text-violet-400", dot: "bg-violet-500" };
 }
 
 function ConsentBadge({ status }: { status: ConsentStatus }) {
