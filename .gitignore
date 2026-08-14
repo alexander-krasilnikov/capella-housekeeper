@@ -6,4 +6,7 @@ data/
 .env.local
 *.log
 *.tsbuildinfo
-.DS_Store 
+.DS_Store
+.release-staging/
+dist/
+*.tgz 

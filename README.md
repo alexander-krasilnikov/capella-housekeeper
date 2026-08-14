@@ -35,7 +35,85 @@ vanish from history the moment they're torn down.
 - Login/session auth via a signed cookie (`src/lib/auth.ts`), not HTTP
   Basic Auth.
 
-## Setup
+## Install via npx
+
+Requires Node.js >=22.13.0 (needed by `node:sqlite`, this app's storage layer)
+and nothing else - no git clone, no `npm install`, no build step. Each
+GitHub Release has a prebuilt tarball attached; run it directly:
+
+```bash
+npx https://github.com/<org>/<repo>/releases/download/<tag>/capella-housekeeper-<version>.tgz
+```
+
+(This isn't published to the public npm registry - it's only available as a
+GitHub Release asset, so the full URL above is required rather than a bare
+package name.)
+
+On startup it prints the dashboard URL, the default-login reminder, and
+where it's storing data:
+
+```
+Capella Housekeeper starting...
+  Dashboard: http://localhost:3000
+  Login:     admin / change-me - change this in Settings
+  Data:      /home/you/.capella-housekeeper/data
+```
+
+By default, data lives in a stable per-user directory
+(`~/.capella-housekeeper/data`) so it doesn't matter which directory you
+happen to run the command from - re-running it later, from anywhere, sees
+the same clusters and history. Set `CAPELLA_DATA_DIR` to use a different
+location instead. `PORT` and `HOSTNAME` are also respected, same as Next's
+own standalone server.
+
+### Running it as a persistent background service
+
+`npx` runs the process in the foreground - closing the terminal stops it.
+Since this app's entire purpose is an always-on background sync + Slack
+bot, you'll usually want it kept running. Two examples:
+
+**systemd** (Linux) - `/etc/systemd/system/capella-housekeeper.service`:
+
+```ini
+[Unit]
+Description=Capella Housekeeper
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/npx https://github.com/<org>/<repo>/releases/download/<tag>/capella-housekeeper-<version>.tgz
+Restart=on-failure
+User=<your-user>
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then: `sudo systemctl enable --now capella-housekeeper`.
+
+**launchd** (macOS) - `~/Library/LaunchAgents/com.capella-housekeeper.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.capella-housekeeper</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/npx</string>
+    <string>https://github.com/&lt;org&gt;/&lt;repo&gt;/releases/download/&lt;tag&gt;/capella-housekeeper-&lt;version&gt;.tgz</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+```
+
+Then: `launchctl load ~/Library/LaunchAgents/com.capella-housekeeper.plist`.
+
+## Development setup
+
+For working on the code itself, rather than just running it (requires Node.js >=22.13.0):
 
 No environment variables required. Install dependencies and run:
 

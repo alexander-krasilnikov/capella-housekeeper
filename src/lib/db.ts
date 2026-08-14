@@ -2,8 +2,13 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-/** Not a setting - see design.md in the migrate-storage-to-sqlite change. Matches the JSON-era DATA_DIR convention. */
-const DATA_DIR = "./data";
+/**
+ * Not a setting - see design.md in the migrate-storage-to-sqlite change. Matches the JSON-era DATA_DIR convention.
+ * Overridable via `CAPELLA_DATA_DIR` so the packaged/npx launcher can default to a stable
+ * per-user location instead of one relative to wherever the process happens to be invoked from
+ * (see design.md Decision 4 in the distribute-via-npx-tarball change) - unset, this is unchanged.
+ */
+const DATA_DIR = process.env.CAPELLA_DATA_DIR || "./data";
 const DB_FILE = "store.sqlite3";
 
 export function dbPath(): string {

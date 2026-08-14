@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: "standalone",
   experimental: {
     serverActions: {
       // VS Code's forwarded dev-tunnel URL (https://<id>-<port>.<region>.devtunnels.ms)

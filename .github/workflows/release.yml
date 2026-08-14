@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Needed so softprops/action-gh-release can create/update the Release for
+# this tag using the default GITHUB_TOKEN - no other permissions are needed,
+# and nothing here ever touches the public npm registry (npm publish is
+# intentionally not run - see openspec/changes/distribute-via-npx-tarball).
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - run: node scripts/package-release.mjs
+
+      - name: Attach release artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tgz
+          generate_release_notes: true
