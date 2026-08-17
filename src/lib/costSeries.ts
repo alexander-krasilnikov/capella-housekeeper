@@ -1,3 +1,5 @@
+import { groupBy } from "./groupBy";
+
 /** A cost reading for one cluster at one moment - `amountUsd` is Capella's month-to-date figure, or null when it wasn't available (no billing access, credits-based org, or a fetch error). */
 export interface CostSnapshot {
   clusterId: string;
@@ -35,12 +37,7 @@ export function dailySpendFromSnapshots(
   const dayCount = Math.max(0, dayBoundariesMs.length - 1);
   if (dayCount === 0) return [];
 
-  const byCluster = new Map<string, CostSnapshot[]>();
-  for (const snapshot of snapshots) {
-    const existing = byCluster.get(snapshot.clusterId);
-    if (existing) existing.push(snapshot);
-    else byCluster.set(snapshot.clusterId, [snapshot]);
-  }
+  const byCluster = groupBy(snapshots, (s) => s.clusterId);
 
   const totals: (number | null)[] = Array.from({ length: dayCount }, () => null);
 

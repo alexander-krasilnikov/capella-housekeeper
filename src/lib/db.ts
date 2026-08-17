@@ -136,6 +136,20 @@ const SCHEMA_VERSION = 2;
  * runs any of these. `ALTER TABLE ... ADD COLUMN` is the only schema change
  * these support - anything requiring column removal or a type change would
  * need a table rebuild instead.
+ *
+ * BUMPING SCHEMA_VERSION: freeze the *outgoing* schema as a new
+ * `src/test/__fixtures__/schema-v<N>.sql` at the same time. SCHEMA_STATEMENTS
+ * above only ever describes the latest schema, so a frozen copy of each
+ * earlier one is the only way db.migration.test.ts can verify that upgrading
+ * an old database reproduces exactly what a fresh one gets.
+ *
+ * Note that a missing entry here fails silently - `MIGRATIONS[v] ?? []` is a
+ * no-op and the version stamp below lands regardless, leaving fresh installs
+ * perfect and every existing user's upsert failing on a column that was never
+ * added. That mistake is caught by the schema-identity test rather than at
+ * runtime (see the harden-test-suite change's design.md Decision 4), and it is
+ * caught by the chain from the earliest fixture forward - so it stays caught
+ * even if a later version's own fixture is forgotten.
  */
 const MIGRATIONS: Record<number, string[]> = {
   1: [

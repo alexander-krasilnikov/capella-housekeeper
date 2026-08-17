@@ -1,53 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import AppShell, { ClustersIcon } from "./AppShell";
+import { useEffect, useState } from "react";
+import AppShell from "./AppShell";
 import ClusterTable, { type ClusterRow } from "./ClusterTable";
 import HistoryTable, { type HistoryRow } from "./HistoryTable";
 import { dailySpendFromSnapshots, type CostSnapshot } from "@/lib/costSeries";
 import { maxClustersPerDay, type ClusterLifetime } from "@/lib/clusterCounts";
 import { formatUsd } from "@/lib/format";
+import type { ConsentAndActionHealth } from "@/lib/consentActionHealth";
 import type { SlackBotStatus } from "@/lib/slackBot";
 
 type Tab = "clusters" | "history";
-
-/** People glyph for the "Cluster Owners" stat tile. */
-function OwnersIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <circle cx="8" cy="6.5" r="3" />
-      <path d="M2.5 17c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
-      <path d="M14 4.2a3 3 0 0 1 0 5.6M15.5 12.4c1.4.8 2.3 2.2 2.3 4.1" />
-    </svg>
-  );
-}
 
 interface DailyValue {
   label: string;
   /** null = no figure derivable for this day, rendered as "-" rather than a zero bar. */
   value: number | null;
-}
-
-/** Compact stat tile - real data, no mount-gate needed since these are neither locale- nor timezone-sensitive. */
-function StatTile({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-line bg-panel p-4 shadow-sm">
-      {icon}
-      <div>
-        <div className="text-[10px] font-medium uppercase tracking-wider text-ink-muted">{label}</div>
-        <div className="text-xl font-semibold leading-none text-ink">{value}</div>
-      </div>
-    </div>
-  );
 }
 
 /**
@@ -115,11 +83,46 @@ function DailyBarChart({
   );
 }
 
+/**
+ * One row of the funnel/actions panels' horizontal bar chart: a label, a bar
+ * scaled to the panel's own maximum, and the raw count (the bar is a visual
+ * aid, not a replacement for it - see spec "raw counts... not percentages or
+ * rates").
+ */
+function HorizontalBarRow({ label, value, maxValue }: { label: string; value: number; maxValue: number }) {
+  return (
+    <div className="flex items-center gap-2 py-1">
+      <span className="w-24 shrink-0 text-xs text-ink-muted">{label}</span>
+      <div className="h-3 flex-1 overflow-hidden rounded-full bg-line/50">
+        <div
+          className="h-full rounded-full bg-brand/70"
+          style={{ width: `${value > 0 ? Math.max(4, (value / maxValue) * 100) : 0}%` }}
+        />
+      </div>
+      <span className="w-6 shrink-0 text-right text-sm font-semibold leading-none text-ink">{value}</span>
+    </div>
+  );
+}
+
+/** A titled panel of horizontal bars, one per row, each scaled to the panel's own maximum value - the shared shape behind both the Consent Cycles and Actions Taken panels below. See consent-action-health-stats spec "Funnel panel shows raw counts per outcome" / "Actions-taken panel shows raw counts by trigger". */
+function BarPanel({ title, rows }: { title: string; rows: { label: string; value: number }[] }) {
+  const maxValue = Math.max(1, ...rows.map((r) => r.value));
+  return (
+    <div className="min-w-[280px] flex-1 rounded-xl border border-line bg-panel p-4 shadow-sm">
+      <h2 className="mb-2 text-sm font-semibold text-ink">{title}</h2>
+      {rows.map((row) => (
+        <HorizontalBarRow key={row.label} label={row.label} value={row.value} maxValue={maxValue} />
+      ))}
+    </div>
+  );
+}
+
 export default function DashboardTabs({
   clusterRows,
   historyRows,
   costSnapshots,
   clusterLifetimes,
+  consentActionHealth,
   initialSlackStatus,
   developerTurnOnEnabled,
   initialSidebarCollapsed,
@@ -129,6 +132,7 @@ export default function DashboardTabs({
   historyRows: HistoryRow[];
   costSnapshots: CostSnapshot[];
   clusterLifetimes: ClusterLifetime[];
+  consentActionHealth: ConsentAndActionHealth;
   initialSlackStatus: SlackBotStatus;
   developerTurnOnEnabled: boolean;
   initialSidebarCollapsed: boolean;
@@ -138,13 +142,6 @@ export default function DashboardTabs({
   const [tab, setTab] = useState<Tab>(initialTab);
   const [clusterCount, setClusterCount] = useState<DailyValue[] | null>(null);
   const [dailySpend, setDailySpend] = useState<DailyValue[] | null>(null);
-
-  const distinctOwners = useMemo(
-    // "Unknown" is the placeholder for a cluster with no derived owner (see
-    // page.tsx), not a person - counting it would inflate the figure.
-    () => new Set(clusterRows.map((r) => r.owner).filter((owner) => owner !== "Unknown")).size,
-    [clusterRows],
-  );
 
   // Bucketing by calendar day, and naming that day, both depend on the
   // visitor's own timezone/locale - a server component can't know either,
@@ -180,16 +177,6 @@ export default function DashboardTabs({
     >
       {tab === "clusters" && (
         <div className="mb-4 flex flex-wrap items-stretch gap-4">
-          <StatTile
-            icon={<ClustersIcon className="h-5 w-5 shrink-0 text-brand" />}
-            label="Total Clusters"
-            value={clusterRows.length}
-          />
-          <StatTile
-            icon={<OwnersIcon className="h-5 w-5 shrink-0 text-brand" />}
-            label="Cluster Owners"
-            value={distinctOwners}
-          />
           <DailyBarChart
             title="Cluster Count"
             days={clusterCount}
@@ -201,6 +188,23 @@ export default function DashboardTabs({
             days={dailySpend}
             formatValue={formatUsd}
             emptyMessage="No cost data for the last 7 days - the Capella API key has no billing access, or usage hasn't been reported yet."
+          />
+          <BarPanel
+            title="Consent Cycles (7d)"
+            rows={[
+              { label: "Approved", value: consentActionHealth.funnel.approved },
+              { label: "Snoozed", value: consentActionHealth.funnel.snoozed },
+              { label: "Expired", value: consentActionHealth.funnel.expired },
+              { label: "Still pending", value: consentActionHealth.funnel.pending },
+            ]}
+          />
+          <BarPanel
+            title="Actions Taken (7d)"
+            rows={[
+              { label: "Auto", value: consentActionHealth.actions.autoDecided },
+              { label: "Slack", value: consentActionHealth.actions.slackApproved },
+              { label: "Manual", value: consentActionHealth.actions.manual },
+            ]}
           />
         </div>
       )}

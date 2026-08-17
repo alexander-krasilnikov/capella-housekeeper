@@ -12,7 +12,6 @@ import {
   getSortedRowModel,
   useReactTable,
   type ColumnFiltersState,
-  type FilterFn,
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
@@ -24,6 +23,7 @@ import ManualDeleteButton from "./ManualDeleteButton";
 import ClusterHistoryButton from "./ClusterHistoryButton";
 import RefreshButton from "./RefreshButton";
 import FormattedDateTime, { formatDateTime } from "./FormattedDateTime";
+import { createGlobalFuzzyFilter, PaginationFooter } from "./TablePagination";
 import type { AgeStatus, ConsentActionOutcome, ConsentStatus } from "@/types";
 import type { ClusterStatusBucket } from "@/lib/capellaClient";
 
@@ -207,30 +207,22 @@ function ActionOutcomeBadge({ status, outcome }: { status: ConsentStatus; outcom
  * per row against every column's label, independent of which column
  * TanStack happens to invoke this for.
  */
-const globalFuzzyFilter: FilterFn<ClusterRow> = (row, _columnId, filterValue) => {
-  const term = String(filterValue).toLowerCase();
-  if (!term) return true;
-  const r = row.original;
-  const haystack = [
-    r.org,
-    r.project,
-    r.name,
-    formatDateTime(r.createdAtMs),
-    r.ageLabel,
-    formatDateTime(r.lastActivityMs),
-    r.owner,
-    r.configSummary,
-    actualCostDisplayLabel(r),
-    r.statusLabel,
-    describeConsent(r.consentStatus).label,
-    describeActionOutcome(r.consentStatus, r.actionOutcome)?.label ?? "",
-    r.snoozeJustification ?? "",
-    r.workflowNote ?? "",
-  ]
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(term);
-};
+const globalFuzzyFilter = createGlobalFuzzyFilter<ClusterRow>((r) => [
+  r.org,
+  r.project,
+  r.name,
+  formatDateTime(r.createdAtMs),
+  r.ageLabel,
+  formatDateTime(r.lastActivityMs),
+  r.owner,
+  r.configSummary,
+  actualCostDisplayLabel(r),
+  r.statusLabel,
+  describeConsent(r.consentStatus).label,
+  describeActionOutcome(r.consentStatus, r.actionOutcome)?.label ?? "",
+  r.snoozeJustification ?? "",
+  r.workflowNote ?? "",
+]);
 
 const columnHelper = createColumnHelper<ClusterRow>();
 
@@ -406,8 +398,6 @@ const columns = [
     },
   }),
 ];
-
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 /**
  * Columns shown before an operator customizes anything - a lean, at-a-glance
@@ -657,7 +647,6 @@ export default function ClusterTable({
 
   const pageRows = table.getRowModel().rows;
   const totalRowCount = table.getPrePaginationRowModel().rows.length;
-  const pageCount = table.getPageCount();
 
   if (rows.length === 0) {
     return (
@@ -912,47 +901,7 @@ export default function ClusterTable({
             </tbody>
           </table>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-3 py-2 text-sm text-ink-muted">
-            <div>
-              Showing {pagination.pageIndex * pagination.pageSize + 1}–
-              {Math.min((pagination.pageIndex + 1) * pagination.pageSize, totalRowCount)} of {totalRowCount}
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5">
-                Rows per page
-                <select
-                  value={pagination.pageSize}
-                  onChange={(e) => table.setPageSize(Number(e.target.value))}
-                  className="rounded-md border border-line bg-panel px-1.5 py-1 text-sm"
-                >
-                  {PAGE_SIZE_OPTIONS.map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                onClick={() => table.previousPage()}
-                disabled={!table.getCanPreviousPage()}
-                className="rounded-md border border-line px-2 py-1 disabled:opacity-40"
-              >
-                ← Prev
-              </button>
-              <span>
-                Page {pagination.pageIndex + 1} of {Math.max(pageCount, 1)}
-              </span>
-              <button
-                type="button"
-                onClick={() => table.nextPage()}
-                disabled={!table.getCanNextPage()}
-                className="rounded-md border border-line px-2 py-1 disabled:opacity-40"
-              >
-                Next →
-              </button>
-            </div>
-          </div>
+          <PaginationFooter table={table} totalRowCount={totalRowCount} className="px-3 py-2 text-sm" />
         </div>
       )}
     </div>

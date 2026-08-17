@@ -1,5 +1,6 @@
 import { WebClient } from "@slack/web-api";
 import { ageDaysBetween, ageHoursBetween } from "./format";
+import { classifyClusterStatus, TRANSITIONAL_STATUS } from "./capellaClient";
 import { formatStatusLabel } from "./configSummary";
 import type { AgeStatus, ClusterRecord, Settings, TierNotificationConfig } from "../types";
 
@@ -38,10 +39,24 @@ const ACTION_SUMMARY: Record<ConsentAction, string> = {
   snooze: "Delays this by a chosen number of days, with a required reason. You'll be asked again after.",
 };
 
+/**
+ * Slack's hard cap on a confirm object's `text`. Exceeding it is rejected as
+ * `invalid_blocks` by chat.postMessage, which surfaces only as "the owner
+ * couldn't be reached" - see ACTION_SUMMARY's comment for the incident.
+ */
+const SLACK_CONFIRM_TEXT_LIMIT = 300;
+
 function confirmDialog(action: ConsentAction, clusterName: string) {
+  // The summaries are written to sit well inside the cap, but the cluster name
+  // is caller-supplied and unbounded, so it - not the explanation - is what
+  // gets trimmed if the two together would overflow.
+  const prefix = `${ACTION_SUMMARY[action]}\n\nCluster: `;
+  const room = SLACK_CONFIRM_TEXT_LIMIT - prefix.length;
+  const shownName = clusterName.length <= room ? clusterName : `${clusterName.slice(0, Math.max(0, room - 1))}…`;
+
   return {
     title: { type: "plain_text" as const, text: `${ACTION_LABELS[action]} this cluster?` },
-    text: { type: "plain_text" as const, text: `${ACTION_SUMMARY[action]}\n\nCluster: ${clusterName}` },
+    text: { type: "plain_text" as const, text: `${prefix}${shownName}` },
     confirm: { type: "plain_text" as const, text: "Yes, do it" },
     deny: { type: "plain_text" as const, text: "Cancel" },
   };
@@ -63,9 +78,20 @@ function describeTier(
   }
 }
 
-/** True when the cluster's raw Capella status indicates it's already turned off - used to suppress a redundant "Turn off" ask. */
+/**
+ * True when a "Turn off" ask would be redundant: the cluster is already off, or
+ * is on its way there.
+ *
+ * Built on `classifyClusterStatus`'s buckets rather than a regex over the
+ * humanized label. `/off/i` matched anything whose label merely contained
+ * "off", which included `turningOffFailed` ("Turning Off Failed") - a cluster
+ * whose turn-off *failed* is still running and still billing, but was treated as
+ * already off, so it was never asked again and `canAutoTurnOff` stayed false for
+ * it, leaving it running indefinitely. `turningOff` is deliberately still
+ * included: that turn-off is in progress, so asking again would be noise.
+ */
 export function isAlreadyOff(rawStatus: string | null): boolean {
-  return /off/i.test(formatStatusLabel(rawStatus));
+  return classifyClusterStatus(rawStatus) === "off" || rawStatus === TRANSITIONAL_STATUS.turningOff;
 }
 
 /**

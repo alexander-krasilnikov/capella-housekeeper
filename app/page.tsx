@@ -15,6 +15,7 @@ import { type HistoryRow } from "./components/HistoryTable";
 import DashboardTabs from "./components/DashboardTabs";
 import { getSlackBotStatus } from "@/lib/slackBot";
 import { getLifecycleAuditLog, describeAuditEntry, TRIGGER_LABEL } from "@/lib/historyView";
+import { summarizeConsentAndActionHealth } from "@/lib/consentActionHealth";
 
 // This page reads the local JSON store directly (not via fetch()), so
 // Next has no signal that it's dynamic and will statically pre-render it
@@ -144,6 +145,11 @@ export default async function DashboardPage({
   }
   const clusterLifetimes = [...lifetimeById.values()];
 
+  // Exact rolling 7-day window (not calendar-day buckets) - unlike the two
+  // charts above, this has no per-day axis, so there's no reason to involve
+  // the viewer's timezone; safe to compute here with the server's `now`.
+  const consentActionHealth = summarizeConsentAndActionHealth(auditLog, now);
+
   // All chrome (brand, nav, page header, logout) lives in DashboardTabs -
   // the page title depends on which view is active, which is client state.
   return (
@@ -152,6 +158,7 @@ export default async function DashboardPage({
       historyRows={historyRows}
       costSnapshots={costSnapshots}
       clusterLifetimes={clusterLifetimes}
+      consentActionHealth={consentActionHealth}
       initialSlackStatus={getSlackBotStatus()}
       developerTurnOnEnabled={settings.developerTurnOnEnabled}
       initialSidebarCollapsed={initialSidebarCollapsed}

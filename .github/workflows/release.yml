@@ -24,6 +24,17 @@ jobs:
 
       - run: npm ci
 
+      # Gate publication on the same checks CI runs on every branch, so a tag
+      # can never ship an artifact built from a state those checks reject -
+      # see release-distribution spec, "Failing checks block publication".
+      # These run before `npm run build` deliberately: there's no point
+      # producing an artifact that won't be attached.
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test suite
+        run: npm test
+
       - run: npm run build
 
       - run: node scripts/package-release.mjs

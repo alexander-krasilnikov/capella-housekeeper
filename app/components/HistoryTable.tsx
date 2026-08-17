@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   createColumnHelper,
   flexRender,
@@ -9,10 +9,10 @@ import {
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
-  type FilterFn,
   type SortingState,
 } from "@tanstack/react-table";
 import FormattedDateTime, { formatDateTime } from "./FormattedDateTime";
+import { createGlobalFuzzyFilter, PaginationFooter } from "./TablePagination";
 import type { HistoryTrigger } from "@/types";
 
 export interface HistoryRow {
@@ -26,21 +26,15 @@ export interface HistoryRow {
   description: string;
 }
 
-/**
- * Search matches against the same display labels the user sees - same
- * approach as ClusterTable's globalFuzzyFilter, checked once per row
- * against every column's label regardless of which column TanStack
- * happens to invoke this for.
- */
-const globalFuzzyFilter: FilterFn<HistoryRow> = (row, _columnId, filterValue) => {
-  const term = String(filterValue).toLowerCase();
-  if (!term) return true;
-  const r = row.original;
-  const haystack = [r.clusterName, r.org, r.project, r.description, r.triggerLabel, formatDateTime(r.takenAtMs)]
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(term);
-};
+/** Search matches against the same display labels the user sees, checked once per row against every column's label regardless of which column TanStack happens to invoke this for. */
+const globalFuzzyFilter = createGlobalFuzzyFilter<HistoryRow>((r) => [
+  r.clusterName,
+  r.org,
+  r.project,
+  r.description,
+  r.triggerLabel,
+  formatDateTime(r.takenAtMs),
+]);
 
 const columnHelper = createColumnHelper<HistoryRow>();
 
@@ -63,12 +57,19 @@ const columns = [
   }),
 ];
 
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
-
 export default function HistoryTable({ rows }: { rows: HistoryRow[] }) {
   const [globalFilter, setGlobalFilter] = useState("");
   const [sorting, setSorting] = useState<SortingState>([{ id: "takenAt", desc: true }]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
+
+  // Return to page 1 when the search narrows the result set, so the user
+  // doesn't land on a now out-of-range page. Done explicitly here (rather
+  // than TanStack's autoResetPageIndex) since that option's reset fires
+  // synchronously during row-model computation - safe after mount, but not
+  // on the very first render, which is what autoResetPageIndex does.
+  useEffect(() => {
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [globalFilter]);
 
   const table = useReactTable({
     data: rows,
@@ -97,7 +98,6 @@ export default function HistoryTable({ rows }: { rows: HistoryRow[] }) {
 
   const pageRows = table.getRowModel().rows;
   const totalRowCount = table.getPrePaginationRowModel().rows.length;
-  const pageCount = table.getPageCount();
 
   if (rows.length === 0) {
     return (
@@ -162,47 +162,7 @@ export default function HistoryTable({ rows }: { rows: HistoryRow[] }) {
             </tbody>
           </table>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-3 py-2 text-sm text-ink-muted">
-            <div>
-              Showing {pagination.pageIndex * pagination.pageSize + 1}–
-              {Math.min((pagination.pageIndex + 1) * pagination.pageSize, totalRowCount)} of {totalRowCount}
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5">
-                Rows per page
-                <select
-                  value={pagination.pageSize}
-                  onChange={(e) => table.setPageSize(Number(e.target.value))}
-                  className="rounded-md border border-line bg-panel px-1.5 py-1 text-sm"
-                >
-                  {PAGE_SIZE_OPTIONS.map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                onClick={() => table.previousPage()}
-                disabled={!table.getCanPreviousPage()}
-                className="rounded-md border border-line px-2 py-1 disabled:opacity-40"
-              >
-                ← Prev
-              </button>
-              <span>
-                Page {pagination.pageIndex + 1} of {Math.max(pageCount, 1)}
-              </span>
-              <button
-                type="button"
-                onClick={() => table.nextPage()}
-                disabled={!table.getCanNextPage()}
-                className="rounded-md border border-line px-2 py-1 disabled:opacity-40"
-              >
-                Next →
-              </button>
-            </div>
-          </div>
+          <PaginationFooter table={table} totalRowCount={totalRowCount} className="px-3 py-2 text-sm" />
         </div>
       )}
     </div>

@@ -153,6 +153,25 @@ const ALWAYS_LIFECYCLE_TRIGGERS: ReadonlySet<HistoryTrigger> = new Set([
   "manual-delete",
 ]);
 
+/**
+ * The only two triggers that move `consentStatus` into an `approved-*`
+ * state - see the `describeAuditEntry` branch below that already
+ * special-cases `slack-decision` when narrating an approval. Exported so
+ * consentActionHealth.ts's cycle reconstruction reads this same set instead
+ * of re-deriving "who can approve a cycle" independently, which would
+ * otherwise be free to silently drift from this file's own trigger
+ * semantics as the state machine evolves.
+ */
+export const APPROVAL_TRIGGERS: ReadonlySet<HistoryTrigger> = new Set(["slack-decision", "auto-turnoff-decision"]);
+
+/**
+ * Triggers where an operator acted directly on a cluster's power state,
+ * bypassing the consent pipeline entirely - a subset of
+ * ALWAYS_LIFECYCLE_TRIGGERS (excludes manual-turn-on, which isn't a
+ * stop/delete action). Exported for the same reason as APPROVAL_TRIGGERS.
+ */
+export const MANUAL_ACTION_TRIGGERS: ReadonlySet<HistoryTrigger> = new Set(["manual-turn-off", "manual-delete"]);
+
 /** See cluster-sync spec "Cluster record persistence" - true iff any compared field differs. */
 export function historyEntriesDiffer(a: ClusterRecord, b: ClusterRecord): boolean {
   return HISTORY_FIELDS.some((spec) => spec.differs(a, b));

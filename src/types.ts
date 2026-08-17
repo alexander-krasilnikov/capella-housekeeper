@@ -215,7 +215,9 @@ export const DEFAULT_SETTINGS: Omit<Settings, "sessionSecret"> = {
   capellaOrgs: [],
   capellaApiBaseUrl: "https://cloudapi.cloud.couchbase.com/v4",
   syncIntervalHours: 1,
-  retentionDays: 7,
+  // Must cover consentActionHealth.ts's LINEAGE_LOOKBACK_HOURS (30 days) or
+  // approval lineage silently breaks once history older than this is purged.
+  retentionDays: 30,
   dashboardUsername: "admin",
   dashboardPassword: "change-me",
   slackBotToken: "",

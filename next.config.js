@@ -2,6 +2,12 @@
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  // The dev server only allows requests (including the HMR websocket) from
+  // the origin it was initialized with (localhost by default) - visiting it
+  // via 127.0.0.1 instead trips this and breaks the HMR websocket, which can
+  // leave the page's client JS partially hydrated (event handlers silently
+  // not attaching) without any error banner to explain why.
+  allowedDevOrigins: ["127.0.0.1"],
   experimental: {
     serverActions: {
       // VS Code's forwarded dev-tunnel URL (https://<id>-<port>.<region>.devtunnels.ms)

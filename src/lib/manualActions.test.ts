@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClusterRecord, OrgConfig, Settings } from "../types";
+import { makeClusterRecord, makeOrgConfig, makeSettings } from "../test/factories";
 
 const { turnOnCluster, turnOffCluster } = vi.hoisted(() => ({ turnOnCluster: vi.fn(), turnOffCluster: vi.fn() }));
 vi.mock("./capellaClient", () => ({
@@ -38,9 +39,7 @@ vi.mock("./notifications", () => ({ supersedeLiveMessage }));
 const { resolveOrgConfig, manualTurnOn, manualTurnOff } = await import("./manualActions");
 const { CapellaApiError } = await import("./capellaClient");
 
-function org(overrides: Partial<OrgConfig> = {}): OrgConfig {
-  return { id: "cfg-1", orgId: "org-1", apiKey: "key-1", ...overrides };
-}
+const org = makeOrgConfig;
 
 function settingsWith(capellaOrgs: OrgConfig[]): Settings {
   return { capellaOrgs } as Settings;
@@ -90,8 +89,16 @@ describe("resolveOrgConfig", () => {
   });
 });
 
+/**
+ * The shared factory with this suite's own distinct starting point: a
+ * cluster that is *already off* (so a turn-on is the valid action to test),
+ * with no owner or activity signal, and an `orgConfigId` matching `org()`
+ * above so credential resolution succeeds by the preferred path. These
+ * differences are load-bearing for the tests below, which is why they stay
+ * spelled out here rather than moving into the shared defaults.
+ */
 function fullRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
-  return {
+  return makeClusterRecord({
     clusterId: "cluster-1",
     clusterName: "my-cluster",
     orgId: "org-1",
@@ -106,40 +113,23 @@ function fullRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
       nodeSpec: { compute: { cpu: 4, ram: 16 } },
       status: "turnedOff",
     },
-    createdAt: "2026-01-01T00:00:00.000Z",
     ownerDerived: null,
     lastActivityAt: null,
     lastActivitySource: "unknown",
     actualCost: { amountUsd: null, asOf: null },
-    deletedAt: null,
-    lastSyncedAt: "2026-01-01T00:00:00.000Z",
     lastObservedFingerprint: "",
-    lastNotifiedAgeStatus: null,
-    consentStatus: "none",
-    consentCycleStartedAt: null,
-    remindersSent: 0,
-    consentTierAtDecision: null,
-    actionOutcome: "none",
-    slackChannelId: null,
-    slackMessageTs: null,
-    snoozeUntil: null,
-    snoozeJustification: null,
-    snoozeCount: 0,
-    consentStatusChangedAt: null,
-    workflowNote: null,
     ...overrides,
-  };
+  });
 }
 
 function fullSettings(overrides: Partial<Settings> = {}): Settings {
-  return {
+  return makeSettings({
     capellaOrgs: [org()],
-    capellaApiBaseUrl: "https://cloudapi.cloud.couchbase.com/v4",
     // Every test in this suite exercises manualTurnOn actually running -
     // the dedicated "developer toggle disabled" test below overrides this.
     developerTurnOnEnabled: true,
     ...overrides,
-  } as Settings;
+  });
 }
 
 describe("manualTurnOn", () => {

@@ -41,15 +41,25 @@ The system SHALL capture consent decisions through genuine Slack button interact
 - **THEN** receiving a consent decision does not require any inbound HTTP endpoint reachable by Slack's infrastructure
 
 ### Requirement: Turn-off is not offered when the cluster is already off
-The system SHALL omit the turn-off option from a consent notification when the cluster's current operational state (independent of its age-status tier) indicates it is already turned off, even if the tier is configured to ask for turn-off.
+The system SHALL omit the turn-off option from a consent notification when the cluster's current operational state (independent of its age-status tier) indicates that turning it off would be redundant - either because it is already off, or because a turn-off is already in progress - even if the tier is configured to ask for turn-off.
+
+A state indicating that a previous turn-off attempt *failed* SHALL NOT be treated as already off. Such a cluster is still running and still incurring cost, so it remains eligible to be asked about and eligible for any automatic action its tier is configured for. This distinction SHALL be drawn from the same classification of Capella's own operational states that the dashboard's status badge uses, rather than from the wording of a status's display label.
 
 #### Scenario: Cluster already turned off
 - **WHEN** a tier configured to ask for turn-off is entered by a cluster whose current operational state is already "turned off"
 - **THEN** the notification does not include a turn-off option
 
+#### Scenario: Turn-off already in progress
+- **WHEN** a tier configured to ask for turn-off is entered by a cluster whose current operational state indicates a turn-off is already underway
+- **THEN** the notification does not include a turn-off option, since the action being asked for is already happening
+
+#### Scenario: A previous turn-off failed
+- **WHEN** a tier configured to ask for turn-off is entered by a cluster whose current operational state indicates a previous turn-off attempt failed
+- **THEN** the notification does include a turn-off option, because the cluster is still running
+
 #### Scenario: Cluster running
 - **WHEN** a tier configured to ask for turn-off is entered by a cluster that is currently running
-- **THEN** the notification includes the turn-off option
+- **THEN** the notification includes a turn-off option
 
 ### Requirement: Destructive asks require an explicit confirmation gesture
 The system SHALL require an additional explicit confirmation gesture, distinct from the initial button click, before recording a turn-off or delete decision.
@@ -163,7 +173,7 @@ The system SHALL allow each notification-eligible tier (Stale, Forgotten) to ind
 - **THEN** requests for clusters in that tier expire or snooze without limit exactly as before this capability existed
 
 ### Requirement: Expiry with auto-turn-off enabled results in an automatic turn-off decision
-The system SHALL, when a tier's auto-turn-off-on-inaction is enabled and that tier's ask-to-turn-off option is enabled and the cluster's current operational state is not already turned off, record an approved-turnoff decision - instead of marking the request expired with no action - the moment a pending request reaches that tier's configured expiry period with no owner response. The system SHALL notify the cluster's owner that the turn-off was triggered automatically due to no response, and SHALL persist, on the cluster record, an explanation of why the decision was made automatically, for display in the dashboard and audit log.
+The system SHALL, when a tier's auto-turn-off-on-inaction is enabled and that tier's ask-to-turn-off option is enabled and turning the cluster off would not be redundant (per "Turn-off is not offered when the cluster is already off"), record an approved-turnoff decision - instead of marking the request expired with no action - the moment a pending request reaches that tier's configured expiry period with no owner response. The system SHALL notify the cluster's owner that the turn-off was triggered automatically due to no response, and SHALL persist, on the cluster record, an explanation of why the decision was made automatically, for display in the dashboard and audit log.
 
 #### Scenario: Request expires with auto-turn-off eligible
 - **WHEN** a pending request for a cluster in a tier with auto-turn-off-on-inaction and ask-to-turn-off both enabled reaches its configured expiry period with no decision, and the cluster is currently running
@@ -176,6 +186,10 @@ The system SHALL, when a tier's auto-turn-off-on-inaction is enabled and that ti
 #### Scenario: Expiry when the cluster is already turned off
 - **WHEN** a pending request expires with auto-turn-off eligible but the cluster's current operational state is already turned off
 - **THEN** the request is marked expired with no action taken, since there is nothing left to turn off, and no automatic-turn-off notification is sent
+
+#### Scenario: Expiry after a previous turn-off failed
+- **WHEN** a pending request expires with auto-turn-off eligible for a cluster whose previous turn-off attempt failed
+- **THEN** an automatic turn-off decision is recorded, because the cluster is still running and the earlier failure must not exempt it permanently
 
 ### Requirement: Exhausting the snooze cap triggers the same automatic outcome as expiry
 The system SHALL maintain, per cluster, a count of snooze decisions recorded that persists across a snoozed cycle resuming (per "A snoozed request resumes after its snooze period, even without a tier change") and resets only when the cluster's age-status tier changes. When a tier's auto-turn-off-on-inaction is enabled, the system SHALL refuse a snooze attempt that would exceed that tier's configured maximum snoozes at the moment of the attempt - without recording a new snooze or opening the snooze dialog - and SHALL instead apply the same automatic-turnoff decision and owner notification described for expiry, subject to the same ask-to-turn-off and already-off conditions, persisting on the cluster record an explanation that the maximum snooze count was reached.
@@ -254,4 +268,17 @@ The system SHALL record, on the cluster record, when its consent status most rec
 #### Scenario: Reminder and expiry timing is unaffected
 - **WHEN** a reminder is sent or an expiry check runs for a pending request
 - **THEN** that timing continues to be computed from the existing pending-cycle-start timestamp, unaffected by the consent-status-changed timestamp
+
+### Requirement: A notification remains deliverable regardless of cluster name length
+Every consent notification SHALL be constructed so that it stays within the messaging platform's payload limits for any cluster name, however long. Where a limit would otherwise be exceeded, the cluster name SHALL be shortened - with a visible indication that it was shortened - in preference to omitting or truncating the explanation of what the action does.
+
+This exists because an over-long payload is rejected wholesale, and that rejection is indistinguishable from the owner being unreachable: the operator sees only that the notification was not delivered, with nothing pointing at the name as the cause.
+
+#### Scenario: Cluster with an unusually long name
+- **WHEN** a consent notification is built for a cluster whose name is long enough that including it in full would exceed a payload limit
+- **THEN** the notification is still valid and deliverable, the name appears shortened with an indication that it was shortened, and the explanation of each offered action remains complete
+
+#### Scenario: Cluster with an ordinary name
+- **WHEN** a consent notification is built for a cluster whose name is short enough to fit
+- **THEN** the name appears in full, with no indication of shortening
 

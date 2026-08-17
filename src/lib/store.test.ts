@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import type { ClusterRecord, ClusterSnapshot } from "../types";
+import type { ClusterSnapshot } from "../types";
+import { makeClusterRecord as makeRecord } from "../test/factories";
 
 // Every test gets a fresh in-memory database - store.ts's getDb() is
 // overridden below to always return this test's instance, so tests never
@@ -16,47 +17,6 @@ vi.mock("./db", async () => {
 
 const { appendHistory, appendHistoryIfChanged, historyEntriesDiffer, readHistory } = await import("./store");
 const { bootstrapSchema } = await import("./db");
-
-function makeRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
-  return {
-    clusterId: "c1",
-    clusterName: "test-cluster",
-    orgId: "org1",
-    orgName: "Org",
-    projectId: "proj1",
-    projectName: "Project",
-    config: {
-      cloudProvider: "aws",
-      region: "us-east-1",
-      couchbaseVersion: "8.0.0",
-      nodeCount: 3,
-      nodeSpec: { compute: { cpu: 4, ram: 16 } },
-      status: "healthy",
-    },
-    createdAt: "2026-01-01T00:00:00.000Z",
-    ownerDerived: "owner@example.com",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
-    lastActivitySource: "sync-observed",
-    actualCost: { amountUsd: 100, asOf: "2026-01-01T00:00:00.000Z" },
-    deletedAt: null,
-    lastSyncedAt: "2026-01-01T00:00:00.000Z",
-    lastObservedFingerprint: "abc",
-    lastNotifiedAgeStatus: null,
-    consentStatus: "none",
-    consentCycleStartedAt: null,
-    remindersSent: 0,
-    consentTierAtDecision: null,
-    actionOutcome: "none",
-    slackChannelId: null,
-    slackMessageTs: null,
-    snoozeUntil: null,
-    snoozeJustification: null,
-    snoozeCount: 0,
-    consentStatusChangedAt: null,
-    workflowNote: null,
-    ...overrides,
-  };
-}
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");

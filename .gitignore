@@ -9,4 +9,5 @@ data/
 .DS_Store
 .release-staging/
 dist/
-*.tgz 
+*.tgz
+coverage/ 

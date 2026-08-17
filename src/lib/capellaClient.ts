@@ -319,7 +319,13 @@ export async function getBillingUsage(
   clusterId: string,
 ): Promise<BillingResult> {
   const now = new Date();
-  const startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  // Both bounds are derived in UTC, matching how they're serialized. Building
+  // the start from local calendar components (getFullYear/getMonth) and then
+  // formatting via toISOString mixed the two: in any timezone ahead of UTC,
+  // midnight on the 1st local is still the last day of the previous month in
+  // UTC, so the "month to date" window silently began a day early and included
+  // usage from the prior month.
+  const startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
   const endDate = now.toISOString().slice(0, 10);
 
   try {

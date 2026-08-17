@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Read-only: this workflow only builds and tests. Nothing here publishes,
+# comments, or writes to the repository - unlike release.yml, which needs
+# contents: write to attach its artifact.
+permissions:
+  contents: read
+
+# A newer push to the same branch/PR makes an in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # node-version-file reads package.json's "engines.node", so these checks
+      # run on the minimum version the package declares as supported rather
+      # than whatever happens to be newest - see the automated-quality-gate
+      # spec's "Checks run on the declared minimum Node version". The
+      # node:sqlite storage layer is the reason that minimum exists at all.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: npm
+
+      - run: npm ci
+
+      # Run both even if the first fails, so one report covers everything
+      # that's wrong rather than only the earliest failure. `if: always()`
+      # still fails the job - it only stops the step from being skipped.
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test suite
+        if: always()
+        run: npm run test:coverage

@@ -1,47 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeFieldChanges, isLifecycleChange } from "./historyFields";
-import type { ClusterRecord } from "../types";
-
-function makeRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
-  return {
-    clusterId: "c1",
-    clusterName: "test-cluster",
-    orgId: "org1",
-    orgName: "Org",
-    projectId: "proj1",
-    projectName: "Project",
-    config: {
-      cloudProvider: "aws",
-      region: "us-east-1",
-      couchbaseVersion: "8.0.0",
-      nodeCount: 3,
-      nodeSpec: { compute: { cpu: 4, ram: 16 } },
-      status: "healthy",
-    },
-    createdAt: "2026-01-01T00:00:00.000Z",
-    ownerDerived: "owner@example.com",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
-    lastActivitySource: "sync-observed",
-    actualCost: { amountUsd: 100, asOf: "2026-01-01T00:00:00.000Z" },
-    deletedAt: null,
-    lastSyncedAt: "2026-01-01T00:00:00.000Z",
-    lastObservedFingerprint: "abc",
-    lastNotifiedAgeStatus: null,
-    consentStatus: "none",
-    consentCycleStartedAt: null,
-    remindersSent: 0,
-    consentTierAtDecision: null,
-    actionOutcome: "none",
-    slackChannelId: null,
-    slackMessageTs: null,
-    snoozeUntil: null,
-    snoozeJustification: null,
-    snoozeCount: 0,
-    consentStatusChangedAt: null,
-    workflowNote: null,
-    ...overrides,
-  };
-}
+import { makeClusterRecord as makeRecord } from "../test/factories";
 
 describe("computeFieldChanges", () => {
   it("returns no changes for the first entry (no prior)", () => {
