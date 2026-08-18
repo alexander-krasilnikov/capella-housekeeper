@@ -1,9 +1,9 @@
 import { ageHoursBetween } from "./format";
-import { computeAgeStatus } from "./ageStatus";
+import { computeRecency } from "./recency";
 import { buildConsentMessage, canAutoTurnOff, isAlreadyOff, sendConsentDM, updateMessage } from "./slack";
 import { readClusters, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
-import type { AgeStatus, ClusterRecord, Settings, TierNotificationConfig } from "../types";
+import type { Recency, ClusterRecord, Settings, TierNotificationConfig } from "../types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -13,17 +13,17 @@ export function isEmailLike(value: string | null): value is string {
 }
 
 /**
- * "In Use" has no configured tier settings (see NotifiableAgeStatus) - there's
- * nothing to ask about automatically. A manual ask can still target an
- * "In Use" cluster (an operator overriding the algorithm's classification),
+ * "Fresh" has no configured tier settings (see NotifiableRecency) - there's
+ * nothing to ask about automatically. A manual ask can still target a
+ * "Fresh" cluster (an operator overriding the algorithm's classification),
  * so it needs *some* config to build a message from; defaulting to offering
  * both turn-off and delete gives the operator full manual control rather
  * than silently offering nothing. `notify` is irrelevant here - manual sends
- * always bypass it. autoTurnOffOnInaction is always false - "In Use" is
+ * always bypass it. autoTurnOffOnInaction is always false - "Fresh" is
  * never eligible for it regardless of any other setting (see
  * auto-turnoff-on-inaction spec).
  */
-const IN_USE_MANUAL_TIER_CONFIG: TierNotificationConfig = {
+const FRESH_MANUAL_TIER_CONFIG: TierNotificationConfig = {
   notify: false,
   askTurnOff: true,
   askDelete: true,
@@ -31,15 +31,15 @@ const IN_USE_MANUAL_TIER_CONFIG: TierNotificationConfig = {
   maxSnoozes: 0,
 };
 
-export function resolveTierConfig(tier: AgeStatus, settings: Settings): TierNotificationConfig {
-  return tier === "In Use" ? IN_USE_MANUAL_TIER_CONFIG : settings.notificationsByTier[tier];
+export function resolveTierConfig(tier: Recency, settings: Settings): TierNotificationConfig {
+  return tier === "Fresh" ? FRESH_MANUAL_TIER_CONFIG : settings.notificationsByTier[tier];
 }
 
-/** Same computation `computeAgeStatus` needs, from a stored record instead of the render-time inputs `app/page.tsx` already has to hand. */
-export function computeRecordAgeStatus(record: ClusterRecord, settings: Settings, nowMs: number): AgeStatus {
+/** Same computation `computeRecency` needs, from a stored record instead of the render-time inputs `app/page.tsx` already has to hand. */
+export function computeRecordRecency(record: ClusterRecord, settings: Settings, nowMs: number): Recency {
   const createdAtMs = new Date(record.createdAt).getTime();
   const lastActivityMs = record.lastActivityAt ? new Date(record.lastActivityAt).getTime() : null;
-  return computeAgeStatus(
+  return computeRecency(
     ageHoursBetween(createdAtMs, nowMs),
     lastActivityMs,
     record.lastActivitySource,
@@ -70,7 +70,7 @@ export async function supersedeLiveMessage(record: ClusterRecord, settings: Sett
  */
 export async function applyAutoTurnOffDecision(
   record: ClusterRecord,
-  tier: AgeStatus,
+  tier: Recency,
   settings: Settings,
   reasonNote: string,
   nowMs: number,
@@ -85,7 +85,7 @@ export async function applyAutoTurnOffDecision(
 /** Sends (or re-sends, as a reminder) a tier notification. Returns false without throwing on any skip/failure - owner unresolvable, tokens unset, or the Slack send itself failing are all "didn't send," not errors. */
 async function trySendNotification(
   record: ClusterRecord,
-  tier: AgeStatus,
+  tier: Recency,
   settings: Settings,
   isReminder: boolean,
   nowMs: number,
@@ -109,7 +109,7 @@ async function trySendNotification(
 
 /**
  * Applies one sync cycle's worth of notification logic to every active
- * (non-tombstoned) record, in place: detects age-status tier transitions -
+ * (non-tombstoned) record, in place: detects recency tier transitions -
  * resetting the consent cycle and sending a fresh notification when the new
  * tier is configured to notify - and advances any still-pending cycle
  * through its reminders and expiry. See cluster-consent-notifications spec.
@@ -120,12 +120,12 @@ export async function applyConsentNotifications(
   nowMs: number,
 ): Promise<void> {
   for (const record of records) {
-    const tier = computeRecordAgeStatus(record, settings, nowMs);
+    const tier = computeRecordRecency(record, settings, nowMs);
 
-    if (tier !== record.lastNotifiedAgeStatus) {
+    if (tier !== record.lastNotifiedRecency) {
       await supersedeLiveMessage(record, settings, `No longer current - *${record.clusterName}*'s status changed to *${tier}*.`);
 
-      record.lastNotifiedAgeStatus = tier;
+      record.lastNotifiedRecency = tier;
       record.consentStatus = "none";
       record.consentCycleStartedAt = null;
       record.consentStatusChangedAt = new Date(nowMs).toISOString();
@@ -139,7 +139,7 @@ export async function applyConsentNotifications(
       record.snoozeJustification = null;
       record.snoozeCount = 0;
 
-      if (tier !== "In Use" && settings.notificationsByTier[tier].notify) {
+      if (tier !== "Fresh" && settings.notificationsByTier[tier].notify) {
         const sent = await trySendNotification(record, tier, settings, false, nowMs);
         if (sent) {
           record.consentStatus = "pending";
@@ -164,7 +164,7 @@ export async function applyConsentNotifications(
       record.consentTierAtDecision = null;
       record.actionOutcome = "none";
 
-      if (tier !== "In Use" && settings.notificationsByTier[tier].notify) {
+      if (tier !== "Fresh" && settings.notificationsByTier[tier].notify) {
         const sent = await trySendNotification(record, tier, settings, false, nowMs);
         if (sent) {
           record.consentStatus = "pending";
@@ -181,17 +181,17 @@ export async function applyConsentNotifications(
     }
 
     if (record.consentStatus !== "pending" || !record.consentCycleStartedAt) continue;
-    // "pending" is never set for "In Use" by the automatic path above, but a
+    // "pending" is never set for "Fresh" by the automatic path above, but a
     // manual send (sendManualConsentRequest) can set it regardless of tier -
     // that cycle still needs to advance through reminders and expiry like
-    // any other, so there's deliberately no early-out for "In Use" here.
+    // any other, so there's deliberately no early-out for "Fresh" here.
 
     const ageMs = nowMs - new Date(record.consentCycleStartedAt).getTime();
     const expiryMs = settings.consentExpiryDays * DAY_MS;
 
     if (ageMs >= expiryMs) {
       const tierConfig = resolveTierConfig(tier, settings);
-      if (tier !== "In Use" && canAutoTurnOff(record, tierConfig)) {
+      if (tier !== "Fresh" && canAutoTurnOff(record, tierConfig)) {
         await applyAutoTurnOffDecision(
           record,
           tier,
@@ -226,14 +226,14 @@ export interface ManualConsentResult {
 /**
  * Manually (re-)sends a real consent request for a cluster's *current*
  * tier, using that tier's configured asks (askTurnOff/askDelete, or the
- * "In Use" manual default from resolveTierConfig if the cluster doesn't
+ * "Fresh" manual default from resolveTierConfig if the cluster doesn't
  * currently have a notifiable tier) - bypasses the tier's `notify` toggle
  * (clicking this button is itself the trigger) but otherwise behaves like
  * an automatic send: supersedes any still-live message first, and on
  * success resets the consent cycle to a fresh "pending" with real ask
  * buttons, exactly as a transition-triggered send would. Always available
  * regardless of tier - an operator may want to check in with an owner even
- * when the algorithm currently classifies the cluster "In Use".
+ * when the algorithm currently classifies the cluster "Fresh".
  */
 export async function sendManualConsentRequest(clusterId: string): Promise<ManualConsentResult> {
   const [clusters, settings] = await Promise.all([readClusters(), readSettings()]);
@@ -247,7 +247,7 @@ export async function sendManualConsentRequest(clusterId: string): Promise<Manua
   }
 
   const nowMs = Date.now();
-  const tier = computeRecordAgeStatus(record, settings, nowMs);
+  const tier = computeRecordRecency(record, settings, nowMs);
   const tierConfig = resolveTierConfig(tier, settings);
 
   await supersedeLiveMessage(record, settings, `Superseded by a manually-sent request for *${record.clusterName}*.`);
@@ -269,7 +269,7 @@ export async function sendManualConsentRequest(clusterId: string): Promise<Manua
     return { ok: false, message: "Cluster disappeared before the request could be recorded." };
   }
   const priorRecord = { ...freshRecord };
-  freshRecord.lastNotifiedAgeStatus = tier;
+  freshRecord.lastNotifiedRecency = tier;
   freshRecord.consentStatus = "pending";
   freshRecord.consentCycleStartedAt = new Date(nowMs).toISOString();
   freshRecord.consentStatusChangedAt = new Date(nowMs).toISOString();

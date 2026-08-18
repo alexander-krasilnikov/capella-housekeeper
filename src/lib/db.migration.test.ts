@@ -29,6 +29,7 @@ const { bootstrapSchema, CLUSTER_RECORD_COLUMNS } = await import("./db");
 const { appendHistory, clusterRecordToRow, readClusters, readHistory, upsertClusters } = await import("./store");
 
 const SCHEMA_V1_SQL = fs.readFileSync(new URL("../test/__fixtures__/schema-v1.sql", import.meta.url), "utf8");
+const SCHEMA_V2_SQL = fs.readFileSync(new URL("../test/__fixtures__/schema-v2.sql", import.meta.url), "utf8");
 
 /** The two columns MIGRATIONS[1] adds to both `clusters` and `history`. */
 const V2_ADDED_COLUMNS = ["consentStatusChangedAtMs", "workflowNote"];
@@ -37,6 +38,13 @@ const V2_ADDED_COLUMNS = ["consentStatusChangedAtMs", "workflowNote"];
 function openV1Database(): DatabaseSync {
   const fresh = new DatabaseSync(":memory:");
   fresh.exec(SCHEMA_V1_SQL);
+  return fresh;
+}
+
+/** A database at exactly schema version 2, built from the frozen fixture. */
+function openV2Database(): DatabaseSync {
+  const fresh = new DatabaseSync(":memory:");
+  fresh.exec(SCHEMA_V2_SQL);
   return fresh;
 }
 
@@ -59,6 +67,21 @@ describe("the frozen v1 fixture", () => {
       expect(columnNames(snapshot, "clusters")).not.toContain(column);
       expect(columnNames(snapshot, "history")).not.toContain(column);
     }
+  });
+});
+
+describe("the frozen v2 fixture", () => {
+  it("really is version 2 - the starting point the rename migration must handle", () => {
+    const v2 = openV2Database();
+    const snapshot = schemaSnapshot(v2);
+
+    expect(snapshot.userVersion).toBe(2);
+    // If this fixture ever drifted forward to already carry the rename,
+    // every test below would pass vacuously without exercising the upgrade.
+    expect(columnNames(snapshot, "clusters")).toContain("lastNotifiedAgeStatus");
+    expect(columnNames(snapshot, "clusters")).not.toContain("lastNotifiedRecency");
+    expect(columnNames(snapshot, "history")).toContain("lastNotifiedAgeStatus");
+    expect(columnNames(snapshot, "history")).not.toContain("lastNotifiedRecency");
   });
 });
 
@@ -101,6 +124,85 @@ describe("an upgraded database is structurally identical to a fresh one", () => 
     bootstrapSchema(migrated);
 
     expect(schemaSnapshot(migrated).userVersion).toBeGreaterThan(1);
+  });
+});
+
+describe("an upgraded v2 database is structurally identical to a fresh one", () => {
+  it("produces an identical schema snapshot", () => {
+    const migrated = openV2Database();
+    bootstrapSchema(migrated);
+
+    expect(schemaSnapshot(migrated)).toEqual(schemaSnapshot(openFreshDatabase()));
+  });
+
+  it("renames lastNotifiedAgeStatus to lastNotifiedRecency on both record-shaped tables", () => {
+    const migrated = openV2Database();
+    bootstrapSchema(migrated);
+
+    const snapshot = schemaSnapshot(migrated);
+    expect(columnNames(snapshot, "clusters")).toContain("lastNotifiedRecency");
+    expect(columnNames(snapshot, "clusters")).not.toContain("lastNotifiedAgeStatus");
+    expect(columnNames(snapshot, "history")).toContain("lastNotifiedRecency");
+    expect(columnNames(snapshot, "history")).not.toContain("lastNotifiedAgeStatus");
+  });
+});
+
+describe("the rename migration rewrites existing tier values", () => {
+  /** A v2 database seeded directly with rows carrying every old tier string, including NULL. */
+  function openV2DatabaseWithTierData(): DatabaseSync {
+    const db = openV2Database();
+    db.exec(`
+      INSERT INTO tier_notifications (tier, notify, askTurnOff, askDelete, autoTurnOffOnInaction, maxSnoozes)
+      VALUES ('Stale', 1, 0, 1, 0, 3), ('Forgotten', 1, 1, 1, 1, 3)
+    `);
+    const insertCluster = db.prepare(`
+      INSERT INTO clusters (
+        clusterId, clusterName, orgId, orgName, projectId, projectName, cloudProvider, region,
+        nodeCount, nodeCpu, nodeRam, createdAtMs, lastActivitySource, lastSyncedAtMs,
+        lastObservedFingerprint, lastNotifiedAgeStatus, consentStatus, remindersSent,
+        consentTierAtDecision, actionOutcome, snoozeCount
+      ) VALUES (@clusterId, 'n', 'o', 'on', 'p', 'pn', 'aws', 'us', 1, 1, 1, 0, 'unknown', 0, @fp,
+        @lastNotifiedAgeStatus, 'pending', 0, @consentTierAtDecision, 'none', 0)
+    `);
+    insertCluster.run({ clusterId: "c-stale", fp: "fp1", lastNotifiedAgeStatus: "Stale", consentTierAtDecision: "Stale" });
+    insertCluster.run({ clusterId: "c-forgotten", fp: "fp2", lastNotifiedAgeStatus: "Forgotten", consentTierAtDecision: "Forgotten" });
+    insertCluster.run({ clusterId: "c-in-use", fp: "fp3", lastNotifiedAgeStatus: "In Use", consentTierAtDecision: null });
+    insertCluster.run({ clusterId: "c-null", fp: "fp4", lastNotifiedAgeStatus: null, consentTierAtDecision: null });
+    return db;
+  }
+
+  it("rewrites lastNotifiedAgeStatus/consentTierAtDecision values on clusters", () => {
+    const migrated = openV2DatabaseWithTierData();
+    bootstrapSchema(migrated);
+
+    const rows = migrated
+      .prepare("SELECT clusterId, lastNotifiedRecency, consentTierAtDecision FROM clusters ORDER BY clusterId")
+      .all();
+    expect(rows).toEqual([
+      { clusterId: "c-forgotten", lastNotifiedRecency: "Old", consentTierAtDecision: "Old" },
+      { clusterId: "c-in-use", lastNotifiedRecency: "Fresh", consentTierAtDecision: null },
+      { clusterId: "c-null", lastNotifiedRecency: null, consentTierAtDecision: null },
+      { clusterId: "c-stale", lastNotifiedRecency: "Aging", consentTierAtDecision: "Aging" },
+    ]);
+  });
+
+  it("rebuilds tier_notifications with remapped tier values and the new CHECK constraint", () => {
+    const migrated = openV2DatabaseWithTierData();
+    bootstrapSchema(migrated);
+
+    const rows = migrated.prepare("SELECT * FROM tier_notifications ORDER BY tier").all();
+    expect(rows).toEqual([
+      { tier: "Aging", notify: 1, askTurnOff: 0, askDelete: 1, autoTurnOffOnInaction: 0, maxSnoozes: 3 },
+      { tier: "Old", notify: 1, askTurnOff: 1, askDelete: 1, autoTurnOffOnInaction: 1, maxSnoozes: 3 },
+    ]);
+
+    // schemaSnapshot deliberately doesn't compare CHECK constraint text (see
+    // schemaSnapshot.ts), so the constraint's actual behavior is asserted here directly.
+    expect(() =>
+      migrated.exec(
+        "INSERT INTO tier_notifications (tier, notify, askTurnOff, askDelete, autoTurnOffOnInaction, maxSnoozes) VALUES ('Stale', 1, 0, 1, 0, 3)",
+      ),
+    ).toThrow(/CHECK constraint failed/);
   });
 });
 
@@ -214,8 +316,8 @@ describe("existing data survives an upgrade", () => {
       consentStatus: "pending",
       consentCycleStartedAt: "2026-01-05T00:00:00.000Z",
       remindersSent: 1,
-      consentTierAtDecision: "Stale",
-      lastNotifiedAgeStatus: "Stale",
+      consentTierAtDecision: "Aging",
+      lastNotifiedRecency: "Aging",
       slackChannelId: "D0FIXTURE",
       slackMessageTs: "1767571200.000100",
     });
@@ -288,6 +390,57 @@ describe("existing data survives an upgrade", () => {
       expect(entry.record.workflowNote).toBeNull();
       expect(entry.record.consentStatusChangedAt).toBeNull();
     }
+  });
+});
+
+describe("existing data survives an upgrade from v2", () => {
+  /**
+   * Works on a copy: `bootstrapSchema` mutates the database it's given, and
+   * the committed fixture has to stay at version 2 for every later run.
+   */
+  function openUpgradedV2GoldenFixture(): DatabaseSync {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "capella-housekeeper-migration-v2-"));
+    const copy = path.join(tempDir, "store.sqlite3");
+    fs.copyFileSync(new URL("../test/__fixtures__/db-v2.sqlite3", import.meta.url), copy);
+
+    const opened = new DatabaseSync(copy);
+    expect(schemaSnapshot(opened).userVersion).toBe(2);
+    bootstrapSchema(opened);
+    return opened;
+  }
+
+  beforeEach(() => {
+    db = openUpgradedV2GoldenFixture();
+  });
+
+  it("keeps every stored cluster readable", async () => {
+    const clusters = await readClusters();
+
+    expect(clusters.map((c) => c.clusterId).sort()).toEqual([
+      "fixture-cluster-1",
+      "fixture-cluster-2",
+      "fixture-cluster-3",
+    ]);
+  });
+
+  it("rewrites each cluster's old tier strings to the new vocabulary", async () => {
+    const clusters = await readClusters();
+
+    const stale = clusters.find((c) => c.clusterId === "fixture-cluster-1");
+    expect(stale).toMatchObject({ lastNotifiedRecency: "Aging", consentTierAtDecision: "Aging" });
+
+    const forgotten = clusters.find((c) => c.clusterId === "fixture-cluster-3");
+    expect(forgotten).toMatchObject({ lastNotifiedRecency: "Old", consentTierAtDecision: "Old" });
+  });
+
+  it("rewrites history entries' old tier strings too, including a tombstoned one", async () => {
+    const history = await readHistory();
+
+    expect(history).toHaveLength(3);
+    const tombstone = history.find((h) => h.clusterId === "fixture-cluster-deleted");
+    expect(tombstone?.record.deletedAt).toBe("2026-01-06T00:00:00.000Z");
+    expect(tombstone?.record.lastNotifiedRecency).toBe("Old");
+    expect(tombstone?.record.consentTierAtDecision).toBe("Old");
   });
 });
 

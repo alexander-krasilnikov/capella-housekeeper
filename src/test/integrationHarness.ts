@@ -7,7 +7,7 @@
  *   │ slack          ← Slack HTTP         FAKED    │
  *   ├──────────────────────────────────────────────┤
  *   │ sync · notifications · reconciliation        │
- *   │ store · settings · historyFields · ageStatus │   ALL REAL
+ *   │ store · settings · historyFields · recency   │   ALL REAL
  *   ├──────────────────────────────────────────────┤
  *   │ db.getDb()     ← disk        :memory: SQLite │
  *   └──────────────────────────────────────────────┘

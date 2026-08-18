@@ -77,7 +77,7 @@ function settingsWith(overrides: Partial<Settings> = {}): Settings {
     forgottenHours: 72,
     consentReminderMax: 2,
     consentExpiryDays: 7,
-    notificationsByTier: { Stale: tier(), Forgotten: tier() },
+    notificationsByTier: { Aging: tier(), Old: tier() },
     ...overrides,
   });
 }
@@ -107,29 +107,29 @@ afterEach(() => {
 });
 
 describe("tier transition opens a consent cycle", () => {
-  it("stays quiet while the cluster is still In Use", async () => {
+  it("stays quiet while the cluster is still Fresh", async () => {
     givenAgingCluster();
     atHoursAfterCreation(1);
 
     await runSyncCycle();
 
     const [record] = await readClusters();
-    expect(record.lastNotifiedAgeStatus).toBe("In Use");
+    expect(record.lastNotifiedRecency).toBe("Fresh");
     expect(record.consentStatus).toBe("none");
     expect(slack.sends).toHaveLength(0);
   });
 
   it("sends a DM and opens a pending cycle on entering a notifying tier", async () => {
     givenAgingCluster();
-    // Past the 24h activity grace, before the 72h Forgotten threshold.
+    // Past the 24h activity grace, before the 72h Old threshold.
     atHoursAfterCreation(48);
 
     await runSyncCycle();
 
     const [record] = await readClusters();
-    expect(record.lastNotifiedAgeStatus).toBe("Stale");
+    expect(record.lastNotifiedRecency).toBe("Aging");
     expect(record.consentStatus).toBe("pending");
-    expect(record.consentTierAtDecision).toBe("Stale");
+    expect(record.consentTierAtDecision).toBe("Aging");
     expect(record.consentCycleStartedAt).toBe(new Date().toISOString());
     expect(record.consentStatusChangedAt).toBe(new Date().toISOString());
     expect(record.remindersSent).toBe(0);
@@ -143,14 +143,14 @@ describe("tier transition opens a consent cycle", () => {
 
   it("does not notify for a tier configured not to", async () => {
     givenAgingCluster();
-    settings = settingsWith({ notificationsByTier: { Stale: tier({ notify: false }), Forgotten: tier() } });
+    settings = settingsWith({ notificationsByTier: { Aging: tier({ notify: false }), Old: tier() } });
     atHoursAfterCreation(48);
 
     await runSyncCycle();
 
     const [record] = await readClusters();
     // The tier baseline still advances - it just doesn't ask anyone.
-    expect(record.lastNotifiedAgeStatus).toBe("Stale");
+    expect(record.lastNotifiedRecency).toBe("Aging");
     expect(record.consentStatus).toBe("none");
     expect(slack.sends).toHaveLength(0);
   });
@@ -189,12 +189,12 @@ describe("tier transition opens a consent cycle", () => {
     expect(record.consentStatus).toBe("none");
     expect(record.consentCycleStartedAt).toBeNull();
     // Still recorded as notified for this tier, so it isn't retried every cycle.
-    expect(record.lastNotifiedAgeStatus).toBe("Stale");
+    expect(record.lastNotifiedRecency).toBe("Aging");
   });
 
   it("records the opening of a cycle as a lifecycle history entry", async () => {
     givenAgingCluster();
-    // A first cycle while still In Use, so there is a stored prior to diff the
+    // A first cycle while still Fresh, so there is a stored prior to diff the
     // consent transition against. A brand-new cluster's very first entry has
     // no prior, so computeFieldChanges returns nothing and it is correctly
     // *not* classified as a lifecycle change - that's the discovery entry, not
@@ -220,14 +220,14 @@ describe("a tier transition while a cycle is live resets it", () => {
     const pending = (await readClusters())[0];
     expect(pending.consentStatus).toBe("pending");
 
-    // Escalate past the Forgotten threshold.
+    // Escalate past the Old threshold.
     atHoursAfterCreation(100);
     await runSyncCycle();
 
     const [record] = await readClusters();
-    expect(record.lastNotifiedAgeStatus).toBe("Forgotten");
+    expect(record.lastNotifiedRecency).toBe("Old");
     // A fresh cycle for the new tier, not the old one carried over.
-    expect(record.consentTierAtDecision).toBe("Forgotten");
+    expect(record.consentTierAtDecision).toBe("Old");
     expect(record.remindersSent).toBe(0);
     expect(record.snoozeCount).toBe(0);
     expect(record.snoozeUntil).toBeNull();
@@ -236,7 +236,7 @@ describe("a tier transition while a cycle is live resets it", () => {
     // The previous ask is edited in place so its buttons can't be clicked.
     const superseded = slack.updates.find((u) => u.messageTs === pending.slackMessageTs);
     expect(superseded?.text).toContain("No longer current");
-    expect(superseded?.text).toContain("Forgotten");
+    expect(superseded?.text).toContain("Old");
   });
 
   it("issues a new ask for the new tier", async () => {
@@ -247,7 +247,7 @@ describe("a tier transition while a cycle is live resets it", () => {
     await runSyncCycle();
 
     expect(slack.sends).toHaveLength(2);
-    expect(slack.sends[1].message.text).toContain("Forgotten");
+    expect(slack.sends[1].message.text).toContain("Old");
     // A brand new message, not the first one reused.
     expect((await readClusters())[0].slackMessageTs).not.toBe(slack.sends[0].message.text);
   });
@@ -256,9 +256,9 @@ describe("a tier transition while a cycle is live resets it", () => {
 describe("reminders", () => {
   // A pending cycle only advances through reminders and expiry while the tier
   // that opened it still holds - a tier change takes the reset branch instead.
-  // The default 72h Forgotten threshold is shorter than the 7-day expiry
-  // window, so these tests would escalate to Forgotten mid-window and never
-  // reach the code under test. A far-off threshold keeps the cluster Stale for
+  // The default 72h Old threshold is shorter than the 7-day expiry
+  // window, so these tests would escalate to Old mid-window and never
+  // reach the code under test. A far-off threshold keeps the cluster Aging for
   // the whole window, isolating reminder/expiry behaviour from tier drift.
   beforeEach(() => {
     settings = settingsWith({ forgottenHours: 10_000 });
@@ -331,9 +331,9 @@ describe("reminders", () => {
 describe("expiry", () => {
   // A pending cycle only advances through reminders and expiry while the tier
   // that opened it still holds - a tier change takes the reset branch instead.
-  // The default 72h Forgotten threshold is shorter than the 7-day expiry
-  // window, so these tests would escalate to Forgotten mid-window and never
-  // reach the code under test. A far-off threshold keeps the cluster Stale for
+  // The default 72h Old threshold is shorter than the 7-day expiry
+  // window, so these tests would escalate to Old mid-window and never
+  // reach the code under test. A far-off threshold keeps the cluster Aging for
   // the whole window, isolating reminder/expiry behaviour from tier drift.
   beforeEach(() => {
     settings = settingsWith({ forgottenHours: 10_000 });
@@ -358,8 +358,8 @@ describe("expiry", () => {
     settings = settingsWith({
       forgottenHours: 10_000,
       notificationsByTier: {
-        Stale: tier({ autoTurnOffOnInaction: true }),
-        Forgotten: tier({ autoTurnOffOnInaction: true }),
+        Aging: tier({ autoTurnOffOnInaction: true }),
+        Old: tier({ autoTurnOffOnInaction: true }),
       },
     });
     givenAgingCluster();
@@ -372,7 +372,7 @@ describe("expiry", () => {
 
     const [record] = await readClusters();
     expect(record.consentStatus).toBe("approved-turnoff");
-    expect(record.consentTierAtDecision).toBe("Stale");
+    expect(record.consentTierAtDecision).toBe("Aging");
     expect(record.workflowNote).toBe("no response was received within the configured window");
     expect(slack.updates.at(-1)?.text).toContain("Turned off automatically");
   });
@@ -381,8 +381,8 @@ describe("expiry", () => {
     settings = settingsWith({
       forgottenHours: 10_000,
       notificationsByTier: {
-        Stale: tier({ autoTurnOffOnInaction: true }),
-        Forgotten: tier({ autoTurnOffOnInaction: true }),
+        Aging: tier({ autoTurnOffOnInaction: true }),
+        Old: tier({ autoTurnOffOnInaction: true }),
       },
     });
     capella.users["creator"] = { id: "creator", email: "owner@example.com" };
@@ -404,8 +404,8 @@ describe("expiry", () => {
     settings = settingsWith({
       forgottenHours: 10_000,
       notificationsByTier: {
-        Stale: tier({ autoTurnOffOnInaction: true, askTurnOff: false, askDelete: true }),
-        Forgotten: tier(),
+        Aging: tier({ autoTurnOffOnInaction: true, askTurnOff: false, askDelete: true }),
+        Old: tier(),
       },
     });
     givenAgingCluster();
@@ -456,13 +456,13 @@ describe("snooze resumption", () => {
     await givenSnoozedUntil(snoozeEnd, 2);
     const sendsBefore = slack.sends.length;
 
-    // Still Stale (under 72h), just past the snooze.
+    // Still Aging (under 72h), just past the snooze.
     atHoursAfterCreation(51);
     await runSyncCycle();
 
     const [record] = await readClusters();
     expect(record.consentStatus).toBe("pending");
-    expect(record.consentTierAtDecision).toBe("Stale");
+    expect(record.consentTierAtDecision).toBe("Aging");
     expect(record.remindersSent).toBe(0);
     // Deliberately survives resumption so a tier's maxSnoozes is enforced
     // across the whole tier - see applyConsentNotifications' comment.
@@ -473,7 +473,7 @@ describe("snooze resumption", () => {
   it("returns to none when the tier no longer notifies", async () => {
     const snoozeEnd = new Date(new Date(CREATED_AT).getTime() + 50 * 60 * 60 * 1000).toISOString();
     await givenSnoozedUntil(snoozeEnd);
-    settings = settingsWith({ notificationsByTier: { Stale: tier({ notify: false }), Forgotten: tier() } });
+    settings = settingsWith({ notificationsByTier: { Aging: tier({ notify: false }), Old: tier() } });
 
     atHoursAfterCreation(51);
     await runSyncCycle();
@@ -541,7 +541,7 @@ describe("mid-cycle races against a concurrent writer", () => {
 
   it("keeps this cycle's own genuine consent change rather than adopting what is on disk", async () => {
     // No cycle open yet: this cycle will itself transition the cluster into
-    // Stale and open a consent cycle - a real decision made with fresh data.
+    // Aging and open a consent cycle - a real decision made with fresh data.
     givenAgingCluster();
     atHoursAfterCreation(48);
 
@@ -557,7 +557,7 @@ describe("mid-cycle races against a concurrent writer", () => {
 
     const [record] = await readClusters();
     expect(record.consentStatus).toBe("pending");
-    expect(record.lastNotifiedAgeStatus).toBe("Stale");
+    expect(record.lastNotifiedRecency).toBe("Aging");
   });
 
   it("serializes overlapping callers onto one cycle rather than racing two", async () => {

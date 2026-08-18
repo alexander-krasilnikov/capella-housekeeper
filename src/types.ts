@@ -82,8 +82,8 @@ export interface ClusterRecord {
   /** Fingerprint of config used to detect changes when the Activity Log is unavailable. */
   lastObservedFingerprint: string;
 
-  /** Age status as of the last sync cycle - the edge-trigger baseline for the next cycle's transition check, absent (undefined) for records synced before this field existed. */
-  lastNotifiedAgeStatus: AgeStatus | null;
+  /** Recency as of the last sync cycle - the edge-trigger baseline for the next cycle's transition check, absent (undefined) for records synced before this field existed. */
+  lastNotifiedRecency: Recency | null;
   /** Where the current consent cycle (if any) stands - see cluster-consent-notifications spec. */
   consentStatus: ConsentStatus;
   /** When the current consent cycle started, for expiry - null when consentStatus is "none". Anchors reminder/expiry timing only - see consentStatusChangedAt for a general "when did the current status last change" timestamp that doesn't affect that timing. */
@@ -92,8 +92,8 @@ export interface ClusterRecord {
   consentStatusChangedAt: string | null;
   /** Reminder re-sends issued so far in the current consent cycle. */
   remindersSent: number;
-  /** The age-status tier active when consent was granted - re-checked by the reconciliation loop before acting. */
-  consentTierAtDecision: AgeStatus | null;
+  /** The recency tier active when consent was granted - re-checked by the reconciliation loop before acting. */
+  consentTierAtDecision: Recency | null;
   /** Whether the reconciliation loop has carried out an approved decision - see cluster-lifecycle-actions spec. */
   actionOutcome: ConsentActionOutcome;
   /** Channel/timestamp of the currently-live Slack message (if any) for this cluster's consent cycle, so a decision or a newer reminder can update it in place. Null when there is no live message. */
@@ -145,7 +145,7 @@ export interface StoreData {
   history: ClusterSnapshot[];
 }
 
-export type AgeStatus = "In Use" | "Stale" | "Forgotten";
+export type Recency = "Fresh" | "Aging" | "Old";
 
 export interface TierNotificationConfig {
   notify: boolean;
@@ -157,15 +157,15 @@ export interface TierNotificationConfig {
   maxSnoozes: number;
 }
 
-/** "In Use" clusters are never notification-eligible - there's nothing to ask about a cluster with evidence of active use - so it's excluded from configuration entirely rather than merely defaulted off. */
-export type NotifiableAgeStatus = Exclude<AgeStatus, "In Use">;
+/** "Fresh" clusters are never notification-eligible - there's nothing to ask about a cluster with evidence of active use - so it's excluded from configuration entirely rather than merely defaulted off. */
+export type NotifiableRecency = Exclude<Recency, "Fresh">;
 
-export type NotificationsByTier = Record<NotifiableAgeStatus, TierNotificationConfig>;
+export type NotificationsByTier = Record<NotifiableRecency, TierNotificationConfig>;
 
 export interface Settings {
-  /** How fresh a cluster's last-known activity (real, or its own creation date standing in when no real signal exists) must be to count as "In Use". */
+  /** How fresh a cluster's last-known activity (real, or its own creation date standing in when no real signal exists) must be to count as "Fresh". */
   activityGraceHours: number;
-  /** How long with no evidence of use before a cluster escalates from "Stale" to "Forgotten". */
+  /** How long with no evidence of use before a cluster escalates from "Aging" to "Old". */
   forgottenHours: number;
   capellaOrgs: OrgConfig[];
   capellaApiBaseUrl: string;
@@ -179,7 +179,7 @@ export interface Settings {
   slackBotToken: string;
   /** Slack app-level token (connections:write scope) used to receive button clicks over Socket Mode. Empty string means clicks can't be received even if slackBotToken is set - notifications won't be sent in that case either, since a click with nowhere to land isn't useful. */
   slackAppToken: string;
-  /** Per age-status tier: whether a transition into it notifies, and whether the notification offers a turn-off and/or delete consent ask. */
+  /** Per recency tier: whether a transition into it notifies, and whether the notification offers a turn-off and/or delete consent ask. */
   notificationsByTier: NotificationsByTier;
   /** Max reminder re-sends for a pending consent request before it expires. */
   consentReminderMax: number;
@@ -200,8 +200,8 @@ const DEFAULT_TIER_NOTIFICATION_CONFIG: TierNotificationConfig = {
 };
 
 const DEFAULT_NOTIFICATIONS_BY_TIER: NotificationsByTier = {
-  Stale: { ...DEFAULT_TIER_NOTIFICATION_CONFIG },
-  Forgotten: { ...DEFAULT_TIER_NOTIFICATION_CONFIG },
+  Aging: { ...DEFAULT_TIER_NOTIFICATION_CONFIG },
+  Old: { ...DEFAULT_TIER_NOTIFICATION_CONFIG },
 };
 
 /**

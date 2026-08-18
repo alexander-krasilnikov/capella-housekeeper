@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { readSettings } from "./settings";
+import { DEFAULT_SETTINGS } from "../types";
 
 export const SESSION_COOKIE_NAME = "chk_session";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -71,4 +72,16 @@ export async function verifyCurrentPassword(password: string): Promise<boolean> 
   const { dashboardPassword } = await readSettings();
   if (!dashboardPassword) return false;
   return timingSafeStringEqual(password, dashboardPassword);
+}
+
+/**
+ * Whether the dashboard is still using its seeded default password - true
+ * whether that's because it was never changed, or because an operator later
+ * reset it back to that exact value. Not a secret comparison (the default is
+ * public, documented in DEFAULT_SETTINGS), so a plain equality check is
+ * enough - no timing-safe compare needed.
+ */
+export async function isUsingDefaultPassword(): Promise<boolean> {
+  const { dashboardPassword } = await readSettings();
+  return dashboardPassword === DEFAULT_SETTINGS.dashboardPassword;
 }

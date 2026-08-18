@@ -7,13 +7,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import crypto from "node:crypto";
 import { makeSettings } from "../test/factories";
-import type { Settings } from "../types";
+import { DEFAULT_SETTINGS, type Settings } from "../types";
 
 let settings: Settings;
 vi.mock("./settings", () => ({ readSettings: async () => settings }));
 
-const { createSessionToken, verifySessionToken, verifyCredentials, verifyCurrentPassword, SESSION_COOKIE_NAME } =
-  await import("./auth");
+const {
+  createSessionToken,
+  verifySessionToken,
+  verifyCredentials,
+  verifyCurrentPassword,
+  isUsingDefaultPassword,
+  SESSION_COOKIE_NAME,
+} = await import("./auth");
 
 const SECRET = "test-session-secret";
 
@@ -212,5 +218,34 @@ describe("verifyCurrentPassword", () => {
     settings = makeSettings({ sessionSecret: SECRET, dashboardPassword: "" });
 
     expect(await verifyCurrentPassword("")).toBe(false);
+  });
+});
+
+describe("isUsingDefaultPassword", () => {
+  it("is true when the password is still the seeded default", async () => {
+    settings = makeSettings({ sessionSecret: SECRET, dashboardPassword: DEFAULT_SETTINGS.dashboardPassword });
+
+    expect(await isUsingDefaultPassword()).toBe(true);
+  });
+
+  it("is false once the password has been changed to anything else", async () => {
+    settings = makeSettings({ sessionSecret: SECRET, dashboardPassword: "correct-horse" });
+
+    expect(await isUsingDefaultPassword()).toBe(false);
+  });
+
+  it("is true again if the password is reset back to the exact default value", async () => {
+    settings = makeSettings({ sessionSecret: SECRET, dashboardPassword: "correct-horse" });
+    expect(await isUsingDefaultPassword()).toBe(false);
+
+    settings = makeSettings({ sessionSecret: SECRET, dashboardPassword: DEFAULT_SETTINGS.dashboardPassword });
+
+    expect(await isUsingDefaultPassword()).toBe(true);
+  });
+
+  it("is case-sensitive - a near-miss does not count as the default", async () => {
+    settings = makeSettings({ sessionSecret: SECRET, dashboardPassword: DEFAULT_SETTINGS.dashboardPassword.toUpperCase() });
+
+    expect(await isUsingDefaultPassword()).toBe(false);
   });
 });

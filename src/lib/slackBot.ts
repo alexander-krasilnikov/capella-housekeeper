@@ -1,7 +1,7 @@
 import { App, SocketModeReceiver } from "@slack/bolt";
 import { readClusters, getCluster, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
-import { applyAutoTurnOffDecision, computeRecordAgeStatus, resolveTierConfig } from "./notifications";
+import { applyAutoTurnOffDecision, computeRecordRecency, resolveTierConfig } from "./notifications";
 import {
   buildSnoozeModalView,
   canAutoTurnOff,
@@ -13,7 +13,7 @@ import {
   updateMessage,
   type ConsentAction,
 } from "./slack";
-import type { AgeStatus, ClusterRecord, ConsentStatus, Settings } from "../types";
+import type { Recency, ClusterRecord, ConsentStatus, Settings } from "../types";
 
 let started = false;
 let reconnectInFlight: Promise<void> | null = null;
@@ -145,7 +145,7 @@ async function handleSnoozeSubmission(
   if (channelId && messageTs) {
     const until = new Date(snoozeUntilMs).toISOString().slice(0, 10);
     const reasonNote = ` Reason given: ${justification}`;
-    const tier = computeRecordAgeStatus(record, settings, nowMs);
+    const tier = computeRecordRecency(record, settings, nowMs);
     const tierConfig = resolveTierConfig(tier, settings);
     const allowanceNote = describeSnoozeAllowance(tierConfig, record.snoozeCount);
     const allowanceLine = allowanceNote ? ` ${allowanceNote}` : "";
@@ -169,7 +169,7 @@ async function handleSnoozeSubmission(
  */
 async function handleSnoozeCapExceeded(
   record: ClusterRecord,
-  tier: AgeStatus,
+  tier: Recency,
   maxSnoozes: number,
   settings: Settings,
 ): Promise<void> {
@@ -344,7 +344,7 @@ async function connectSocketMode(botToken: string, appToken: string): Promise<vo
       // ask-to-turn-off is disabled, or the cluster is already off) - there's
       // no automatic outcome to substitute, so refusing would just strand
       // the request with no way forward.
-      const tier = computeRecordAgeStatus(record, settings, Date.now());
+      const tier = computeRecordRecency(record, settings, Date.now());
       const tierConfig = resolveTierConfig(tier, settings);
       const capExceeded = tierConfig.autoTurnOffOnInaction && record.snoozeCount >= tierConfig.maxSnoozes;
       if (capExceeded && canAutoTurnOff(record, tierConfig) && settings.slackBotToken) {

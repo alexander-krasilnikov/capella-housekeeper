@@ -1,7 +1,7 @@
 import { turnOffCluster, deleteCluster, CapellaApiError, TRANSITIONAL_STATUS } from "./capellaClient";
 import { readClusters, getCluster, upsertClusters, appendHistoryIfChanged } from "./store";
 import { readSettings } from "./settings";
-import { computeRecordAgeStatus } from "./notifications";
+import { computeRecordRecency } from "./notifications";
 import { resolveOrgConfig } from "./manualActions";
 import { updateMessage } from "./slack";
 import type { ConsentActionOutcome, ConsentStatus, Settings } from "../types";
@@ -167,7 +167,7 @@ export async function runReconciliationPass(): Promise<ReconciliationResult> {
       slackMessageTs: record.slackMessageTs,
     };
 
-    const currentTier = computeRecordAgeStatus(record, settings, nowMs);
+    const currentTier = computeRecordRecency(record, settings, nowMs);
     if (currentTier !== record.consentTierAtDecision) {
       result.skipped += 1;
       await applyActionOutcome(

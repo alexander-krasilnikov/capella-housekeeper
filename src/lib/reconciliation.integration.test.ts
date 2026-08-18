@@ -51,7 +51,7 @@ const NOW = "2026-03-01T00:00:00.000Z";
 
 /**
  * A cluster with an approved decision awaiting action. `createdAt` and
- * `lastActivitySource: "unknown"` put it firmly in the Forgotten tier at `NOW`,
+ * `lastActivitySource: "unknown"` put it firmly in the Old tier at `NOW`,
  * matching `consentTierAtDecision` so re-verification agrees by default.
  */
 function approvedRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
@@ -65,7 +65,7 @@ function approvedRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
     lastActivityAt: null,
     lastActivitySource: "unknown",
     consentStatus: "approved-turnoff",
-    consentTierAtDecision: "Forgotten",
+    consentTierAtDecision: "Old",
     actionOutcome: "none",
     slackChannelId: "D0HARNESS",
     slackMessageTs: "1767225600.00001",
@@ -153,8 +153,8 @@ describe("an approved delete", () => {
 
 describe("re-verification before acting", () => {
   it("skips a cluster that became active again, without calling Capella", async () => {
-    // Recent activity pulls it back to In Use, so it no longer matches the
-    // Forgotten tier the decision was made in.
+    // Recent activity pulls it back to Fresh, so it no longer matches the
+    // Old tier the decision was made in.
     await upsertClusters([
       approvedRecord({ lastActivityAt: NOW, lastActivitySource: "activity-log" }),
     ]);

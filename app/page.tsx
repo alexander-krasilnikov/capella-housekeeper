@@ -8,7 +8,7 @@ import { classifyClusterStatus } from "@/lib/capellaClient";
 import { isAlreadyOff } from "@/lib/slack";
 import { isEmailLike } from "@/lib/notifications";
 import { ageDaysBetween, ageHoursBetween, formatAge } from "@/lib/format";
-import { computeAgeStatus } from "@/lib/ageStatus";
+import { computeRecency } from "@/lib/recency";
 import { SIDEBAR_COLLAPSED_COOKIE_NAME, parseSidebarCollapsed } from "@/lib/sidebarPreference";
 import { type ClusterRow } from "./components/ClusterTable";
 import { type HistoryRow } from "./components/HistoryTable";
@@ -76,7 +76,7 @@ export default async function DashboardPage({
       snoozeJustification: c.snoozeJustification,
       consentStatusChangedAtMs: c.consentStatusChangedAt ? new Date(c.consentStatusChangedAt).getTime() : null,
       workflowNote: c.workflowNote,
-      ageStatus: computeAgeStatus(
+      recency: computeRecency(
         ageHoursBetween(createdAtMs, now),
         lastActivityMs,
         c.lastActivitySource,

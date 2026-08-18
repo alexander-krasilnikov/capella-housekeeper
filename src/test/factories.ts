@@ -45,7 +45,7 @@ export function makeClusterRecord(overrides: Partial<ClusterRecord> = {}): Clust
     deletedAt: null,
     lastSyncedAt: "2026-01-01T00:00:00.000Z",
     lastObservedFingerprint: "abc",
-    lastNotifiedAgeStatus: null,
+    lastNotifiedRecency: null,
     consentStatus: "none",
     consentCycleStartedAt: null,
     remindersSent: 0,

@@ -2,20 +2,20 @@
 
 import { useState } from "react";
 import { saveNotificationsAction } from "../actions";
-import type { NotifiableAgeStatus, NotificationsByTier, TierNotificationConfig } from "@/types";
+import type { NotifiableRecency, NotificationsByTier, TierNotificationConfig } from "@/types";
 
-/** "In Use" is deliberately excluded - there's nothing to ask about a cluster with evidence of active use. */
-const TIERS: NotifiableAgeStatus[] = ["Stale", "Forgotten"];
+/** "Fresh" is deliberately excluded - there's nothing to ask about a cluster with evidence of active use. */
+const TIERS: NotifiableRecency[] = ["Aging", "Old"];
 
-const TIER_DESCRIPTIONS: Record<NotifiableAgeStatus, string> = {
-  Stale: "No recent activity, past the activity grace period. A reasonable point to start asking.",
-  Forgotten: "Long idle, past the Forgotten threshold. The strongest cleanup candidate.",
+const TIER_DESCRIPTIONS: Record<NotifiableRecency, string> = {
+  Aging: "No recent activity, past the activity grace period. A reasonable point to start asking.",
+  Old: "Long idle, past the Old threshold. The strongest cleanup candidate.",
 };
 
 const inputClass =
   "w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/30";
 
-function TierRow({ tier, config }: { tier: NotifiableAgeStatus; config: TierNotificationConfig }) {
+function TierRow({ tier, config }: { tier: NotifiableRecency; config: TierNotificationConfig }) {
   const [autoTurnOffOnInaction, setAutoTurnOffOnInaction] = useState(config.autoTurnOffOnInaction);
 
   return (

@@ -10,6 +10,7 @@ import {
   verifyCurrentPassword,
   SESSION_COOKIE_NAME,
 } from "@/lib/auth";
+import { DEFAULT_SETTINGS } from "@/types";
 import { THEME_COOKIE_NAME, type ThemeMode } from "@/lib/theme";
 import { SIDEBAR_COLLAPSED_COOKIE_NAME } from "@/lib/sidebarPreference";
 import { runSyncCycle } from "@/lib/sync";
@@ -20,9 +21,9 @@ import { testSlackConnection, type SlackConnectionTestResult } from "@/lib/slack
 import { getOrganization, listProjects, CapellaApiError } from "@/lib/capellaClient";
 import { getSlackBotStatus, reconnectSlackBot, type SlackBotStatus } from "@/lib/slackBot";
 import { getClusterHistory, type HistoryTimelineEntry } from "@/lib/historyView";
-import type { NotifiableAgeStatus, NotificationsByTier, OrgConfig } from "@/types";
+import type { NotifiableRecency, NotificationsByTier, OrgConfig } from "@/types";
 
-const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Stale", "Forgotten"];
+const NOTIFIABLE_TIERS: NotifiableRecency[] = ["Aging", "Old"];
 
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -260,6 +261,37 @@ export async function saveCredentialsAction(formData: FormData): Promise<void> {
 
   revalidatePath("/settings");
   redirect("/settings?credSaved=1");
+}
+
+/**
+ * Submitted from the mandatory /change-password page (see proxy.ts's
+ * isUsingDefaultPassword redirect), not from Settings - reaching this page
+ * at all already required a valid session, so unlike saveCredentialsAction
+ * this doesn't re-confirm the current password (which is the public default
+ * anyway) or touch the username. Only rejects an empty value, a mismatched
+ * confirmation, and - the one rule specific to this flow - a new password
+ * equal to the seeded default, which would just re-trigger the same redirect.
+ */
+export async function changePasswordAction(formData: FormData): Promise<void> {
+  const newPassword = String(formData.get("newPassword") ?? "");
+  const confirmPassword = String(formData.get("confirmPassword") ?? "");
+
+  if (!newPassword) {
+    redirect(`/change-password?error=${encodeURIComponent("Enter a new password.")}`);
+  }
+  if (newPassword !== confirmPassword) {
+    redirect(`/change-password?error=${encodeURIComponent("Passwords do not match.")}`);
+  }
+  if (newPassword === DEFAULT_SETTINGS.dashboardPassword) {
+    redirect(`/change-password?error=${encodeURIComponent("Choose a password other than the default.")}`);
+  }
+
+  const result = await writeSettings({ dashboardPassword: newPassword });
+  if (!result.ok) {
+    redirect(`/change-password?error=${encodeURIComponent(result.error)}`);
+  }
+
+  redirect("/");
 }
 
 /**

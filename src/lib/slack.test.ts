@@ -22,7 +22,7 @@ import {
   SNOOZE_MODAL_CALLBACK_ID,
 } from "./slack";
 import { makeClusterRecord, makeSettings } from "../test/factories";
-import type { AgeStatus, Settings, TierNotificationConfig } from "../types";
+import type { Recency, Settings, TierNotificationConfig } from "../types";
 
 const NOW = new Date("2026-03-01T00:00:00.000Z").getTime();
 
@@ -35,7 +35,7 @@ function settings(overrides: Partial<Settings> = {}): Settings {
 }
 
 function message(options: {
-  tier?: AgeStatus;
+  tier?: Recency;
   config?: Partial<TierNotificationConfig>;
   isReminder?: boolean;
   status?: string | null;
@@ -49,7 +49,7 @@ function message(options: {
       config: { ...makeClusterRecord().config, status: options.status ?? "healthy" },
       snoozeCount: options.snoozeCount ?? 0,
     }),
-    tier: options.tier ?? "Stale",
+    tier: options.tier ?? "Aging",
     tierConfig: tierConfig(options.config),
     isReminder: options.isReminder ?? false,
     nowMs: NOW,
@@ -253,21 +253,21 @@ describe("buildConsentMessage - body content", () => {
     const reminder = message({ isReminder: true });
 
     expect(initial.text).toContain("Housekeeping alert for cluster test-cluster");
-    expect(initial.text).toContain("Tier: Stale");
+    expect(initial.text).toContain("Tier: Aging");
     expect(reminder.text).toContain("Reminder");
   });
 
-  it("states the operational state separately from the age tier", () => {
-    // A cluster can be Forgotten and still running, so both axes are stated.
-    const text = allText(message({ tier: "Forgotten", status: "healthy" }).blocks);
+  it("states the operational state separately from the recency tier", () => {
+    // A cluster can be Old and still running, so both axes are stated.
+    const text = allText(message({ tier: "Old", status: "healthy" }).blocks);
 
     expect(text).toContain("Running state");
-    expect(text).toContain("Usage status");
+    expect(text).toContain("Recency");
   });
 
   it("parameterizes the tier explanation with the configured thresholds", () => {
     const text = allText(
-      message({ tier: "Forgotten", settingsOverrides: { activityGraceHours: 48, forgottenHours: 240 } }).blocks,
+      message({ tier: "Old", settingsOverrides: { activityGraceHours: 48, forgottenHours: 240 } }).blocks,
     );
 
     expect(text).toContain("240");
@@ -276,7 +276,7 @@ describe("buildConsentMessage - body content", () => {
   it("distinguishes no activity on record from genuine inactivity", () => {
     const noSignal = buildConsentMessage({
       cluster: makeClusterRecord({ lastActivityAt: null, lastActivitySource: "unknown" }),
-      tier: "Stale",
+      tier: "Aging",
       tierConfig: tierConfig(),
       isReminder: false,
       nowMs: NOW,
@@ -292,7 +292,7 @@ describe("buildConsentMessage - body content", () => {
         lastActivityAt: new Date(NOW - 5 * 60 * 60 * 1000).toISOString(),
         lastActivitySource: "activity-log",
       }),
-      tier: "Stale",
+      tier: "Aging",
       tierConfig: tierConfig(),
       isReminder: false,
       nowMs: NOW,
@@ -305,7 +305,7 @@ describe("buildConsentMessage - body content", () => {
         lastActivityAt: new Date(NOW - 5 * 24 * 60 * 60 * 1000).toISOString(),
         lastActivitySource: "activity-log",
       }),
-      tier: "Stale",
+      tier: "Aging",
       tierConfig: tierConfig(),
       isReminder: false,
       nowMs: NOW,
@@ -359,9 +359,9 @@ describe("buildConsentMessage - the no-response consequence", () => {
     expect(text).toContain("no automatic action");
   });
 
-  it("adds a resurfacing note for Forgotten only", () => {
-    expect(allText(message({ tier: "Forgotten" }).blocks)).toContain("keep resurfacing");
-    expect(allText(message({ tier: "Stale" }).blocks)).not.toContain("keep resurfacing");
+  it("adds a resurfacing note for Old only", () => {
+    expect(allText(message({ tier: "Old" }).blocks)).toContain("keep resurfacing");
+    expect(allText(message({ tier: "Aging" }).blocks)).not.toContain("keep resurfacing");
   });
 
   it("states the configured reminder count and expiry window", () => {

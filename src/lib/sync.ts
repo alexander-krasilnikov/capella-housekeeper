@@ -135,7 +135,7 @@ async function resolveOwner(
  */
 function consentFieldsEqual(a: ClusterRecord, b: ClusterRecord): boolean {
   return (
-    a.lastNotifiedAgeStatus === b.lastNotifiedAgeStatus &&
+    a.lastNotifiedRecency === b.lastNotifiedRecency &&
     a.consentStatus === b.consentStatus &&
     a.consentCycleStartedAt === b.consentCycleStartedAt &&
     a.remindersSent === b.remindersSent &&
@@ -152,7 +152,7 @@ function consentFieldsEqual(a: ClusterRecord, b: ClusterRecord): boolean {
 }
 
 function adoptConsentFields(record: ClusterRecord, source: ClusterRecord): void {
-  record.lastNotifiedAgeStatus = source.lastNotifiedAgeStatus;
+  record.lastNotifiedRecency = source.lastNotifiedRecency;
   record.consentStatus = source.consentStatus;
   record.consentCycleStartedAt = source.consentCycleStartedAt;
   record.remindersSent = source.remindersSent;
@@ -298,7 +298,7 @@ async function runSyncCycleUnguarded(): Promise<SyncResult> {
           // Carried forward from the prior sync, not re-derived here -
           // applyConsentNotifications (below) is the only thing that
           // advances these, based on the *previous* cycle's values.
-          lastNotifiedAgeStatus: existing?.lastNotifiedAgeStatus ?? null,
+          lastNotifiedRecency: existing?.lastNotifiedRecency ?? null,
           consentStatus: existing?.consentStatus ?? "none",
           consentCycleStartedAt: existing?.consentCycleStartedAt ?? null,
           remindersSent: existing?.remindersSent ?? 0,

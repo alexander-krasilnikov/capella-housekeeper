@@ -24,7 +24,7 @@ import ClusterHistoryButton from "./ClusterHistoryButton";
 import RefreshButton from "./RefreshButton";
 import FormattedDateTime, { formatDateTime } from "./FormattedDateTime";
 import { createGlobalFuzzyFilter, PaginationFooter } from "./TablePagination";
-import type { AgeStatus, ConsentActionOutcome, ConsentStatus } from "@/types";
+import type { Recency, ConsentActionOutcome, ConsentStatus } from "@/types";
 import type { ClusterStatusBucket } from "@/lib/capellaClient";
 
 declare module "@tanstack/react-table" {
@@ -79,7 +79,7 @@ export interface ClusterRow {
   statusBucket: ClusterStatusBucket;
   statusIsOff: boolean;
   ownerEligibleForAsk: boolean;
-  ageStatus: AgeStatus;
+  recency: Recency;
   consentStatus: ConsentStatus;
   actionOutcome: ConsentActionOutcome;
   snoozeUntilMs: number | null;
@@ -91,7 +91,7 @@ export interface ClusterRow {
   lastSyncedAtMs: number;
 }
 
-const AGE_STATUS_OPTIONS: AgeStatus[] = ["In Use", "Stale", "Forgotten"];
+const RECENCY_OPTIONS: Recency[] = ["Fresh", "Aging", "Old"];
 
 type DetailGroup = "Organisation" | "Cluster" | "Workflow";
 const DETAIL_GROUPS: DetailGroup[] = ["Organisation", "Cluster", "Workflow"];
@@ -108,7 +108,7 @@ const DETAIL_GROUP_BY_COLUMN_ID: Record<string, DetailGroup> = {
   config: "Cluster",
   actualCost: "Cluster",
   status: "Cluster",
-  ageStatus: "Cluster",
+  recency: "Cluster",
   consent: "Workflow",
   statusSince: "Workflow",
   snoozeUntil: "Workflow",
@@ -294,12 +294,12 @@ const columns = [
     meta: { widthPct: 6 },
     cell: (info) => <StatusBadge statusLabel={info.getValue()} statusBucket={info.row.original.statusBucket} />,
   }),
-  columnHelper.accessor("ageStatus", {
-    id: "ageStatus",
-    header: "Age Status",
+  columnHelper.accessor("recency", {
+    id: "recency",
+    header: "Recency",
     meta: { widthPct: 7 },
     filterFn: "equalsString",
-    cell: (info) => <AgeStatusBadge status={info.getValue()} />,
+    cell: (info) => <RecencyBadge status={info.getValue()} />,
   }),
   columnHelper.accessor("consentStatus", {
     id: "consent",
@@ -430,7 +430,7 @@ const DEFAULT_COLUMN_ORDER = [
   "owner",
   "lastActivity",
   "status",
-  "ageStatus",
+  "recency",
   "consent",
   "org",
   "project",
@@ -502,8 +502,18 @@ export default function ClusterTable({
   // before it's had a chance to load.
   useEffect(() => {
     const persisted = loadPersistedConfig();
-    if (persisted.sorting) setSorting(persisted.sorting);
-    if (persisted.columnOrder) setColumnOrder(persisted.columnOrder);
+    // A persisted id can outlive the column it named - renamed or removed
+    // since the operator's last visit (see the rename-age-status-to-recency
+    // change, where "ageStatus" became "recency"). `columnOrder` alone is
+    // safe to pass through unfiltered - TanStack's own column-ordering logic
+    // just skips an id with no matching column - but `sorting` is not:
+    // getSortedRowModel() calls table.getColumn(sort.id) directly for every
+    // entry, which logs a console error for an id that no longer exists.
+    // Filtering both here, once, at the single point persisted state enters
+    // the app, is simpler than special-casing every downstream consumer.
+    const knownColumnIds = new Set(table.getAllLeafColumns().map((c) => c.id));
+    if (persisted.sorting) setSorting(persisted.sorting.filter((s) => knownColumnIds.has(s.id)));
+    if (persisted.columnOrder) setColumnOrder(persisted.columnOrder.filter((id) => knownColumnIds.has(id)));
     // Merged under DEFAULT_COLUMN_VISIBILITY, not used verbatim - a column
     // added after an operator's config was already saved is absent from
     // their persisted blob, and TanStack treats an absent key as visible.
@@ -623,13 +633,18 @@ export default function ClusterTable({
   // missing keeps a stale persisted order still complete, without forcing
   // every operator's saved column customization to reset.
   const allLeafColumnIds = table.getAllLeafColumns().map((c) => c.id);
+  const allLeafColumnIdSet = new Set(allLeafColumnIds);
   const knownColumnIds = new Set(columnOrder);
   const currentColumnOrder =
     columnOrder.length > 0
       ? [...columnOrder, ...allLeafColumnIds.filter((id) => !knownColumnIds.has(id))]
       : allLeafColumnIds;
+  // A persisted columnOrder can also carry an id that no longer corresponds
+  // to any column at all - e.g. one renamed or removed since the operator
+  // last saved their layout - which must be dropped here rather than passed
+  // to table.getColumn, which logs a console error for an unknown id.
   const orderedColumnsForPanel = currentColumnOrder
-    .filter((id) => id !== "expander")
+    .filter((id) => id !== "expander" && allLeafColumnIdSet.has(id))
     .map((id) => table.getColumn(id))
     .filter((c): c is NonNullable<typeof c> => !!c);
 
@@ -641,9 +656,9 @@ export default function ClusterTable({
   // Counts per tier among rows passing every filter *except* this column's
   // own - i.e. "how many would show up if this button were selected" -
   // rather than a raw, filter-blind total.
-  const ageStatusFacets = table.getColumn("ageStatus")?.getFacetedUniqueValues() ?? new Map<string, number>();
-  const currentAgeStatusFilter = table.getColumn("ageStatus")?.getFilterValue() as string | undefined;
-  const totalAgeStatusCount = Array.from(ageStatusFacets.values()).reduce((sum, n) => sum + n, 0);
+  const recencyFacets = table.getColumn("recency")?.getFacetedUniqueValues() ?? new Map<string, number>();
+  const currentRecencyFilter = table.getColumn("recency")?.getFilterValue() as string | undefined;
+  const totalRecencyCount = Array.from(recencyFacets.values()).reduce((sum, n) => sum + n, 0);
 
   const pageRows = table.getRowModel().rows;
   const totalRowCount = table.getPrePaginationRowModel().rows.length;
@@ -670,18 +685,18 @@ export default function ClusterTable({
 
         <div
           role="group"
-          aria-label="Filter by age status"
+          aria-label="Filter by recency"
           className="flex items-center gap-1 rounded-lg border border-line bg-panel p-1 shadow-sm"
         >
-          {(["All", ...AGE_STATUS_OPTIONS] as const).map((tier) => {
-            const isActive = tier === "All" ? currentAgeStatusFilter === undefined : currentAgeStatusFilter === tier;
-            const count = tier === "All" ? totalAgeStatusCount : ageStatusFacets.get(tier) ?? 0;
+          {(["All", ...RECENCY_OPTIONS] as const).map((tier) => {
+            const isActive = tier === "All" ? currentRecencyFilter === undefined : currentRecencyFilter === tier;
+            const count = tier === "All" ? totalRecencyCount : recencyFacets.get(tier) ?? 0;
             return (
               <button
                 key={tier}
                 type="button"
                 aria-pressed={isActive}
-                onClick={() => table.getColumn("ageStatus")?.setFilterValue(tier === "All" ? undefined : tier)}
+                onClick={() => table.getColumn("recency")?.setFilterValue(tier === "All" ? undefined : tier)}
                 className={`rounded-md px-2.5 py-1 text-xs font-semibold uppercase tracking-wide transition ${
                   isActive ? "bg-brand text-brand-ink" : "text-ink-muted hover:bg-panel-hover"
                 }`}
@@ -927,14 +942,14 @@ function StatusBadge({ statusLabel, statusBucket }: { statusLabel: string; statu
   );
 }
 
-const AGE_STATUS_STYLE: Record<AgeStatus, { text: string; dot: string }> = {
-  "In Use": { text: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
-  Stale: { text: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
-  Forgotten: { text: "text-rose-600 dark:text-rose-400", dot: "bg-rose-500" },
+const RECENCY_STYLE: Record<Recency, { text: string; dot: string }> = {
+  Fresh: { text: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
+  Aging: { text: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
+  Old: { text: "text-rose-600 dark:text-rose-400", dot: "bg-rose-500" },
 };
 
-function AgeStatusBadge({ status }: { status: AgeStatus }) {
-  const style = AGE_STATUS_STYLE[status];
+function RecencyBadge({ status }: { status: Recency }) {
+  const style = RECENCY_STYLE[status];
   return (
     <span className={`inline-flex items-center gap-1.5 ${style.text}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />

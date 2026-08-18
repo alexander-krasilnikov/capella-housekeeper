@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import {
   DEFAULT_SETTINGS,
-  type NotifiableAgeStatus,
+  type NotifiableRecency,
   type NotificationsByTier,
   type OrgConfig,
   type Settings,
@@ -9,8 +9,8 @@ import {
 } from "../types";
 import { fromSqliteBool, getDb, toSqliteBool } from "./db";
 
-/** "In Use" is deliberately excluded - see NotifiableAgeStatus. */
-const NOTIFIABLE_TIERS: NotifiableAgeStatus[] = ["Stale", "Forgotten"];
+/** "Fresh" is deliberately excluded - see NotifiableRecency. */
+const NOTIFIABLE_TIERS: NotifiableRecency[] = ["Aging", "Old"];
 
 /** Scalar `Settings` fields that live directly as `settings` table columns - everything else (`capellaOrgs`, `notificationsByTier`, `snoozeDayOptions`) is a one-to-many relation with its own table (see design.md Decision 3). */
 const SCALAR_SETTINGS_COLUMNS = [
@@ -89,7 +89,7 @@ function isSnoozeDayOptionsList(v: unknown): v is number[] {
   return v.every((n, i) => isPositiveInteger(n) && (i === 0 || (v[i - 1] as number) < n));
 }
 
-/** Positive integers, strictly increasing so each age-status tier's window is non-empty. */
+/** Positive integers, strictly increasing so each recency tier's window is non-empty. */
 export function validateSettings(input: unknown): Settings | null {
   if (typeof input !== "object" || input === null) return null;
   const {
@@ -338,7 +338,7 @@ export async function writeSettings(
       ok: false,
       error:
         "One or more values are invalid. Check that numeric fields are positive whole numbers " +
-        "(with New < Stale < Forgotten), the API base URL is a valid http(s) URL, required text fields aren't " +
+        "(with New < Aging < Old), the API base URL is a valid http(s) URL, required text fields aren't " +
         "empty, and the snooze day options are a comma-separated list of distinct positive whole numbers.",
     };
   }

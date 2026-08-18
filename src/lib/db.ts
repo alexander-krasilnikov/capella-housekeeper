@@ -48,7 +48,7 @@ const CLUSTER_RECORD_COLUMNS_SQL = `
   deletedAtMs INTEGER,
   lastSyncedAtMs INTEGER NOT NULL,
   lastObservedFingerprint TEXT NOT NULL,
-  lastNotifiedAgeStatus TEXT,
+  lastNotifiedRecency TEXT,
   consentStatus TEXT NOT NULL,
   consentCycleStartedAtMs INTEGER,
   remindersSent INTEGER NOT NULL,
@@ -99,7 +99,7 @@ const SCHEMA_STATEMENTS = [
     position INTEGER NOT NULL
   )`,
   `CREATE TABLE tier_notifications (
-    tier TEXT PRIMARY KEY CHECK (tier IN ('Stale', 'Forgotten')),
+    tier TEXT PRIMARY KEY CHECK (tier IN ('Aging', 'Old')),
     notify INTEGER NOT NULL CHECK (notify IN (0, 1)),
     askTurnOff INTEGER NOT NULL CHECK (askTurnOff IN (0, 1)),
     askDelete INTEGER NOT NULL CHECK (askDelete IN (0, 1)),
@@ -126,7 +126,7 @@ const SCHEMA_STATEMENTS = [
 ];
 
 /** Current schema version - bump alongside a migration below when CLUSTER_RECORD_COLUMNS_SQL (or any other table) gains/loses a column. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 /**
  * Column-additive migrations applied, in order, to bring an existing
@@ -157,6 +157,44 @@ const MIGRATIONS: Record<number, string[]> = {
     "ALTER TABLE clusters ADD COLUMN workflowNote TEXT",
     "ALTER TABLE history ADD COLUMN consentStatusChangedAtMs INTEGER",
     "ALTER TABLE history ADD COLUMN workflowNote TEXT",
+  ],
+  // Renames the "age status" concept to "recency" and its tiers "In Use" /
+  // "Stale" / "Forgotten" to "Fresh" / "Aging" / "Old" - see design.md in the
+  // rename-age-status-to-recency change. Not purely additive like the
+  // migration above: `lastNotifiedAgeStatus` is renamed (SQLite supports
+  // RENAME COLUMN natively, no rebuild needed), the tier strings stored in it
+  // and in `consentTierAtDecision` are rewritten in place, and
+  // `tier_notifications` is rebuilt wholesale because SQLite cannot ALTER a
+  // CHECK constraint - only a create/copy/drop/rename gets it a new one.
+  2: [
+    "ALTER TABLE clusters RENAME COLUMN lastNotifiedAgeStatus TO lastNotifiedRecency",
+    "ALTER TABLE history RENAME COLUMN lastNotifiedAgeStatus TO lastNotifiedRecency",
+    `UPDATE clusters SET lastNotifiedRecency = CASE lastNotifiedRecency
+      WHEN 'In Use' THEN 'Fresh' WHEN 'Stale' THEN 'Aging' WHEN 'Forgotten' THEN 'Old'
+      ELSE lastNotifiedRecency END`,
+    `UPDATE clusters SET consentTierAtDecision = CASE consentTierAtDecision
+      WHEN 'In Use' THEN 'Fresh' WHEN 'Stale' THEN 'Aging' WHEN 'Forgotten' THEN 'Old'
+      ELSE consentTierAtDecision END`,
+    `UPDATE history SET lastNotifiedRecency = CASE lastNotifiedRecency
+      WHEN 'In Use' THEN 'Fresh' WHEN 'Stale' THEN 'Aging' WHEN 'Forgotten' THEN 'Old'
+      ELSE lastNotifiedRecency END`,
+    `UPDATE history SET consentTierAtDecision = CASE consentTierAtDecision
+      WHEN 'In Use' THEN 'Fresh' WHEN 'Stale' THEN 'Aging' WHEN 'Forgotten' THEN 'Old'
+      ELSE consentTierAtDecision END`,
+    `CREATE TABLE tier_notifications_new (
+      tier TEXT PRIMARY KEY CHECK (tier IN ('Aging', 'Old')),
+      notify INTEGER NOT NULL CHECK (notify IN (0, 1)),
+      askTurnOff INTEGER NOT NULL CHECK (askTurnOff IN (0, 1)),
+      askDelete INTEGER NOT NULL CHECK (askDelete IN (0, 1)),
+      autoTurnOffOnInaction INTEGER NOT NULL CHECK (autoTurnOffOnInaction IN (0, 1)),
+      maxSnoozes INTEGER NOT NULL
+    )`,
+    `INSERT INTO tier_notifications_new (tier, notify, askTurnOff, askDelete, autoTurnOffOnInaction, maxSnoozes)
+     SELECT CASE tier WHEN 'Stale' THEN 'Aging' WHEN 'Forgotten' THEN 'Old' ELSE tier END,
+       notify, askTurnOff, askDelete, autoTurnOffOnInaction, maxSnoozes
+     FROM tier_notifications`,
+    "DROP TABLE tier_notifications",
+    "ALTER TABLE tier_notifications_new RENAME TO tier_notifications",
   ],
 };
 

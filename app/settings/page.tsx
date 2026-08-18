@@ -102,12 +102,12 @@ export default async function SettingsPage({
   const sections: SettingsSection[] = [
     {
       id: "thresholds",
-      label: "Age-status thresholds",
+      label: "Recency thresholds",
       content: (
         <div>
           <SectionHeader
-            title="Age-status thresholds"
-            description="Controls when a cluster is classified In Use, Stale, or Forgotten."
+            title="Recency thresholds"
+            description="Controls when a cluster is classified Fresh, Aging, or Old."
           />
           {sharedBanner}
           <form
@@ -118,13 +118,13 @@ export default async function SettingsPage({
             <NumberField
               name="activityGraceHours"
               label="Activity grace period (hours)"
-              hint="A cluster with real activity within this many hours - or created this recently, if it has no activity yet - is 'In Use'. Must be less than 'Forgotten after'."
+              hint="A cluster with real activity within this many hours - or created this recently, if it has no activity yet - is 'Fresh'. Must be less than 'Old after'."
               defaultValue={settings.activityGraceHours}
             />
             <NumberField
               name="forgottenHours"
-              label="Forgotten after (hours)"
-              hint="Older than this with no evidence of use becomes 'Forgotten'; otherwise it's 'Stale'."
+              label="Old after (hours)"
+              hint="Older than this with no evidence of use becomes 'Old'; otherwise it's 'Aging'."
               defaultValue={settings.forgottenHours}
             />
             <button
@@ -181,7 +181,7 @@ export default async function SettingsPage({
         <div>
           <SectionHeader
             title="Slack notifications"
-            description="DMs a cluster's derived owner on age-status transitions, with optional turn-off/delete consent buttons."
+            description="DMs a cluster's derived owner on recency transitions, with optional turn-off/delete consent buttons."
           />
           {sharedBanner}
           <NotificationsEditor

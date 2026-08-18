@@ -191,7 +191,7 @@ describe("history gating across repeated cycles", () => {
   it("classifies a routine config change as a non-lifecycle history entry", async () => {
     // A fixed activity-log timestamp is essential here. Without one, sync falls
     // back to fingerprint comparison, so *changing the config is itself
-    // observed activity* - which pulls the cluster back to "In Use" and makes
+    // observed activity* - which pulls the cluster back to "Fresh" and makes
     // the entry a genuine tier transition (and therefore a lifecycle change).
     // Pinning activity to the log keeps the tier stable, isolating the routine
     // config diff this test is actually about.
@@ -210,7 +210,7 @@ describe("history gating across repeated cycles", () => {
   it("treats a config change as observed activity when there is no activity log", async () => {
     // The other side of the coin, made explicit because it is surprising: with
     // no activity signal available, a scale-up is the only evidence of use there
-    // is, so it legitimately returns the cluster to "In Use".
+    // is, so it legitimately returns the cluster to "Fresh".
     //
     // The clock is pinned to two distinct instants deliberately. On the real
     // clock both cycles can land in the same millisecond, and then the tier
@@ -221,7 +221,7 @@ describe("history gating across repeated cycles", () => {
     vi.setSystemTime(new Date("2026-06-01T00:00:00.000Z"));
     givenSingleOrg([makeApiCluster({ id: "c1", serviceGroups: [{ node: { compute: { cpu: 4, ram: 16 } }, numOfNodes: 3 }] })]);
     await runSyncCycle();
-    expect((await readClusters())[0].lastNotifiedAgeStatus).toBe("Forgotten");
+    expect((await readClusters())[0].lastNotifiedRecency).toBe("Old");
 
     vi.setSystemTime(new Date("2026-06-02T00:00:00.000Z"));
     givenSingleOrg([makeApiCluster({ id: "c1", serviceGroups: [{ node: { compute: { cpu: 4, ram: 16 } }, numOfNodes: 4 }] })]);
@@ -230,8 +230,8 @@ describe("history gating across repeated cycles", () => {
     const [record] = await readClusters();
     expect(record.lastActivitySource).toBe("sync-observed");
     expect(record.lastActivityAt).toBe("2026-06-02T00:00:00.000Z");
-    expect(record.lastNotifiedAgeStatus).toBe("In Use");
-    // Forgotten -> In Use resets the consent cycle, which moves
+    expect(record.lastNotifiedRecency).toBe("Fresh");
+    // Old -> Fresh resets the consent cycle, which moves
     // consentStatusChangedAt and makes this a lifecycle entry.
     expect((await readHistory()).at(-1)?.isLifecycleChange).toBe(true);
   });

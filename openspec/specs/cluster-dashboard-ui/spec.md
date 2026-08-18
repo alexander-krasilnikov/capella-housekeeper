@@ -11,11 +11,11 @@ The system SHALL display all known clusters from all configured organizations an
 - **THEN** the table displays rows from all of those organizations together in one list
 
 ### Requirement: Table columns
-The system SHALL display, for each cluster row, the organization, project, cluster name, creation date, last-activity timestamp, owner, a compact configuration summary, age, actual cost, operational status, and age status.
+The system SHALL display, for each cluster row, the organization, project, cluster name, creation date, last-activity timestamp, owner, a compact configuration summary, age, actual cost, operational status, and recency.
 
 #### Scenario: Row displays all required fields
 - **WHEN** a cluster row is rendered
-- **THEN** it shows organization, project, name, creation date, last activity, owner, configuration summary, age, actual cost, operational status, and age status
+- **THEN** it shows organization, project, name, creation date, last activity, owner, configuration summary, age, actual cost, operational status, and recency
 
 ### Requirement: Date and time values respect the viewer's browser locale
 The system SHALL format every displayed date/time value (creation date, last activity, actual-cost as-of date, last-synced timestamp) using the viewing browser's own locale and regional conventions - date component order, separators, and 12-hour/24-hour clock - rather than a fixed format, SHALL display the year as two digits, and SHALL NOT include seconds.
@@ -116,11 +116,11 @@ The system SHALL paginate the table with a user-selectable page size, showing co
 - **THEN** the table re-paginates using the new page size
 
 ### Requirement: Age status shown independently of operational status
-The system SHALL display each cluster's age status in a badge/column separate from its operational status badge/column, and SHALL NOT merge, replace, or override either status's display based on the value of the other.
+The system SHALL display each cluster's recency in a badge/column separate from its operational status badge/column, and SHALL NOT merge, replace, or override either status's display based on the value of the other.
 
 #### Scenario: Active and Forgotten shown together
-- **WHEN** a cluster is operationally active and its age status is "Forgotten"
-- **THEN** the row shows both an active operational-status badge and a "Forgotten" age-status badge, side by side
+- **WHEN** a cluster is operationally active and its recency is "Old"
+- **THEN** the row shows both an active operational-status badge and an "Old" recency badge, side by side
 
 ### Requirement: Operational status badge reflects Capella's own state semantics
 The system SHALL classify each cluster's raw Capella operational-status value into one of a fixed set of buckets - active, transitioning, off, or unrecognized - using the value itself, not the formatted display label, and SHALL give each bucket its own distinct color; the transitioning bucket SHALL additionally be shown with an animated indicator distinguishing it from every static bucket.
@@ -138,15 +138,15 @@ The system SHALL classify each cluster's raw Capella operational-status value in
 - **THEN** its status badge is shown in a distinct neutral/unrecognized color rather than defaulting to the active or off color
 
 ### Requirement: Age-status filter
-The system SHALL provide a row of quick-filter buttons - one for "All" plus one per age-status tier - separate from the free-text search field, that restrict the table to rows matching the selected tier, and SHALL display, on each button, the count of clusters that would match if it were selected (computed against whatever the free-text search field already narrows the table down to).
+The system SHALL provide a row of quick-filter buttons - one for "All" plus one per recency tier - separate from the free-text search field, that restrict the table to rows matching the selected tier, and SHALL display, on each button, the count of clusters that would match if it were selected (computed against whatever the free-text search field already narrows the table down to).
 
 #### Scenario: Filtering to Forgotten clusters
-- **WHEN** an operator selects the "Forgotten" quick-filter button
-- **THEN** only clusters whose age status is "Forgotten" are shown
+- **WHEN** an operator selects the "Old" quick-filter button
+- **THEN** only clusters whose recency is "Old" are shown
 
 #### Scenario: Clearing the filter
 - **WHEN** an operator selects the "All" quick-filter button
-- **THEN** clusters of all age-status tiers are shown again, subject to any other active filters
+- **THEN** clusters of all recency tiers are shown again, subject to any other active filters
 
 #### Scenario: Counts reflect the active search, not the age-status filter itself
 - **WHEN** a search term is entered that narrows the table to a subset of clusters
@@ -213,11 +213,11 @@ The system SHALL display a single "Action" column, positioned as the rightmost c
 - **THEN** the Action column shows no outcome badge for it
 
 ### Requirement: Default column visibility favors a lean view
-The system SHALL show, before a user has customized column visibility, only the cluster name, owner, last activity, operational status, age status, consent, and Action columns - leaving organization, project, creation date, age, configuration summary, and actual cost hidden until explicitly shown.
+The system SHALL show, before a user has customized column visibility, only the cluster name, owner, last activity, operational status, recency, consent, and Action columns - leaving organization, project, creation date, age, configuration summary, and actual cost hidden until explicitly shown.
 
 #### Scenario: First-time or reset visitor sees the lean default
 - **WHEN** a user views the table with no previously saved column configuration
-- **THEN** only the cluster name, owner, last activity, status, age status, consent, and Action columns are visible, in that left-to-right order
+- **THEN** only the cluster name, owner, last activity, status, recency, consent, and Action columns are visible, in that left-to-right order
 
 #### Scenario: A saved configuration overrides the default
 - **WHEN** a user has previously customized and saved column visibility

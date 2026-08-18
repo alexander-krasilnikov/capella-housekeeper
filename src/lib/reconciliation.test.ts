@@ -30,8 +30,8 @@ vi.mock("./store", () => ({ readClusters, getCluster, upsertClusters, appendHist
 const { readSettings } = vi.hoisted(() => ({ readSettings: vi.fn() }));
 vi.mock("./settings", () => ({ readSettings }));
 
-const { computeRecordAgeStatus } = vi.hoisted(() => ({ computeRecordAgeStatus: vi.fn() }));
-vi.mock("./notifications", () => ({ computeRecordAgeStatus }));
+const { computeRecordRecency } = vi.hoisted(() => ({ computeRecordRecency: vi.fn() }));
+vi.mock("./notifications", () => ({ computeRecordRecency }));
 
 const { resolveOrgConfig } = vi.hoisted(() => ({ resolveOrgConfig: vi.fn() }));
 vi.mock("./manualActions", () => ({ resolveOrgConfig }));
@@ -73,11 +73,11 @@ function approvedRecord(overrides: Partial<ClusterRecord> = {}): ClusterRecord {
     deletedAt: null,
     lastSyncedAt: "2026-01-01T00:00:00.000Z",
     lastObservedFingerprint: "",
-    lastNotifiedAgeStatus: null,
+    lastNotifiedRecency: null,
     consentStatus: "approved-turnoff",
     consentCycleStartedAt: "2026-01-01T00:00:00.000Z",
     remindersSent: 0,
-    consentTierAtDecision: "Stale",
+    consentTierAtDecision: "Aging",
     actionOutcome: "none",
     slackChannelId: null,
     slackMessageTs: null,
@@ -94,7 +94,7 @@ describe("runReconciliationPass", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     readSettings.mockResolvedValue(fullSettings());
-    computeRecordAgeStatus.mockReturnValue("Stale");
+    computeRecordRecency.mockReturnValue("Aging");
     resolveOrgConfig.mockReturnValue(org());
   });
 
@@ -133,8 +133,8 @@ describe("runReconciliationPass", () => {
   });
 
   it("leaves config.status untouched when the action is skipped after re-verification", async () => {
-    const approved = approvedRecord({ consentTierAtDecision: "Stale" });
-    computeRecordAgeStatus.mockReturnValue("In Use"); // recovered - no longer matches the decision tier
+    const approved = approvedRecord({ consentTierAtDecision: "Aging" });
+    computeRecordRecency.mockReturnValue("Fresh"); // recovered - no longer matches the decision tier
     readClusters.mockResolvedValue([approved]);
     getCluster.mockResolvedValue(approved);
 

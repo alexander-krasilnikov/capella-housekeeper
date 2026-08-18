@@ -2,7 +2,7 @@ import { WebClient } from "@slack/web-api";
 import { ageDaysBetween, ageHoursBetween } from "./format";
 import { classifyClusterStatus, TRANSITIONAL_STATUS } from "./capellaClient";
 import { formatStatusLabel } from "./configSummary";
-import type { AgeStatus, ClusterRecord, Settings, TierNotificationConfig } from "../types";
+import type { Recency, ClusterRecord, Settings, TierNotificationConfig } from "../types";
 
 export type ConsentAction = "turnoff" | "delete" | "snooze";
 
@@ -64,17 +64,17 @@ function confirmDialog(action: ConsentAction, clusterName: string) {
 
 /** One-line "label: value (detail)" statement of the tier and why this cluster is in it, parameterized by the operator's actual configured thresholds rather than a hardcoded description. Stated in hours, matching the settings fields exactly, rather than converted to a rounded day figure that could read as a different number than what's actually configured. */
 function describeTier(
-  tier: AgeStatus,
+  tier: Recency,
   ageHours: number,
   settings: Pick<Settings, "activityGraceHours" | "forgottenHours">,
 ): string {
   switch (tier) {
-    case "In Use":
-      return `Usage status: *In Use* (activity within the last ${settings.activityGraceHours} hour(s), or created that recently)`;
-    case "Stale":
-      return `Usage status: *Stale* (${ageHours} hour(s) old, no activity in the last ${settings.activityGraceHours} hour(s), or no activity data at all)`;
-    case "Forgotten":
-      return `Usage status: *Forgotten* (${ageHours} hour(s) old, past the ${settings.forgottenHours}-hour threshold)`;
+    case "Fresh":
+      return `Recency: *Fresh* (activity within the last ${settings.activityGraceHours} hour(s), or created that recently)`;
+    case "Aging":
+      return `Recency: *Aging* (${ageHours} hour(s) old, no activity in the last ${settings.activityGraceHours} hour(s), or no activity data at all)`;
+    case "Old":
+      return `Recency: *Old* (${ageHours} hour(s) old, past the ${settings.forgottenHours}-hour threshold)`;
   }
 }
 
@@ -111,7 +111,7 @@ export function canAutoTurnOff(record: Pick<ClusterRecord, "config">, tierConfig
 /**
  * One-line "label: value" statement of the cluster's *current operational
  * state* (running/turned off/deploying/...) - a different axis entirely
- * from the age-status tier below (a cluster can be "Forgotten" and still
+ * from the recency tier below (a cluster can be "Old" and still
  * running, still billing, and vice versa), so it's worth saying explicitly
  * rather than only ever mentioning the tier.
  */
@@ -146,13 +146,13 @@ function describeLastActivity(cluster: ClusterRecord, nowMs: number): string {
  * cluster is currently running - see auto-turnoff-on-inaction spec) or, as
  * before, that no action is taken automatically. When auto-turn-off is
  * eligible, also states how many snoozes remain before it fires early. For
- * "Forgotten" specifically, appends one short clause noting the cluster has
+ * "Old" specifically, appends one short clause noting the cluster has
  * already exceeded its configured grace period (the forgottenHours
  * threshold), so it'll keep resurfacing until it's acted on or shows
  * renewed activity.
  */
 function describeNoResponseConsequence(
-  tier: AgeStatus,
+  tier: Recency,
   cluster: Pick<ClusterRecord, "config" | "snoozeCount">,
   tierConfig: TierNotificationConfig,
   settings: Pick<Settings, "forgottenHours" | "consentReminderMax" | "consentExpiryDays">,
@@ -162,8 +162,8 @@ function describeNoResponseConsequence(
     ? `*it will be turned off automatically*. You may still snooze up to ${Math.max(0, tierConfig.maxSnoozes - cluster.snoozeCount)} more time(s) before that happens`
     : `*no automatic action* is taken`;
   const base = `Up to ${settings.consentReminderMax} reminder(s) over ${settings.consentExpiryDays} day(s), then it expires - ${consequence}.`;
-  if (tier !== "Forgotten") return base;
-  return `${base} Already past the ${settings.forgottenHours}h Forgotten threshold, so expect it to keep resurfacing until it's handled.`;
+  if (tier !== "Old") return base;
+  return `${base} Already past the ${settings.forgottenHours}h Old threshold, so expect it to keep resurfacing until it's handled.`;
 }
 
 /** Remaining-snooze count for the confirmation shown right after a successful snooze - shared with slackBot.ts so the same "N remaining" phrasing appears both here and in the initial consent message. */
@@ -175,7 +175,7 @@ export function describeSnoozeAllowance(tierConfig: TierNotificationConfig, snoo
 
 export interface ConsentMessageInput {
   cluster: ClusterRecord;
-  tier: AgeStatus;
+  tier: Recency;
   tierConfig: TierNotificationConfig;
   isReminder: boolean;
   nowMs: number;

@@ -221,7 +221,7 @@ describe("manualTurnOn", () => {
     // off right after the operator turned it on.
     const approved = fullRecord({
       consentStatus: "approved-turnoff",
-      consentTierAtDecision: "Stale",
+      consentTierAtDecision: "Aging",
       actionOutcome: "none",
       slackChannelId: "C1",
       slackMessageTs: "123",
@@ -295,7 +295,7 @@ describe("manualTurnOff", () => {
     const pending = fullRecord({
       consentStatus: "pending",
       consentCycleStartedAt: "2026-01-01T00:00:00.000Z",
-      consentTierAtDecision: "Stale",
+      consentTierAtDecision: "Aging",
       remindersSent: 1,
       slackChannelId: "C1",
       slackMessageTs: "123",
@@ -326,7 +326,7 @@ describe("manualTurnOff", () => {
   it("resets an approved-but-not-yet-actioned decision, so reconciliation has nothing left to act on", async () => {
     const approvedDelete = fullRecord({
       consentStatus: "approved-delete",
-      consentTierAtDecision: "Forgotten",
+      consentTierAtDecision: "Old",
       snoozeCount: 3,
       workflowNote: "the maximum of 3 snooze(s) was reached",
     });
