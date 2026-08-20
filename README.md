@@ -1,170 +1,169 @@
 # Capella Housekeeper
 
-A monitoring dashboard for Couchbase Capella clusters across one or more
-organizations. It polls the Capella Management API on an interval, keeps a
-local history of what it finds, and shows every cluster — across every
-configured org and project — in a single filterable, sortable table.
+Finds the Couchbase Capella clusters nobody is using any more, and helps you
+do something about them.
 
-This is phase one: read-only visibility. Cleanup/governance actions (pause,
-delete, notify owners, staleness rules) are intentionally out of scope for
-now; see [openspec/changes/cluster-monitoring-dashboard](openspec/changes/cluster-monitoring-dashboard)
-for the full proposal, design decisions, and spec this was built from.
+It polls the Capella Management API across every organization and project you
+configure, keeps a local history of what it finds, and shows everything in one
+filterable, sortable table. From there it can ask a cluster's owner - by Slack
+DM - whether an idle cluster can be turned off or deleted, and carry out their
+answer. An operator can also act directly, without asking anyone.
+
+**Out of the box it does none of that acting.** A fresh installation is a
+read-only dashboard, and stays one until you turn something on. See
+[running it read-only](#running-it-read-only).
 
 ## What it shows
 
-For every cluster: organization, project, name, creation date, age, last
-activity, owner, a compact configuration summary (e.g. `3× 4vCPU/16GB,
-aws/us-east-1`), and the actual billed cost (which lags the Capella Billing
-API by up to ~5 days). Clusters that
-disappear from Capella are kept as a visibly "deleted" tombstone for 7 days
-(configurable) before being purged, so short-lived clusters don't just
-vanish from history the moment they're torn down.
+For every cluster, across every configured organization: organization,
+project, name, creation date, age, last activity, owner, a compact
+configuration summary (`3× 4vCPU/16GB, aws/us-east-1`), operational status,
+recency tier, and actual billed cost - which lags the Capella Billing API by
+up to about five days.
 
-## Tech stack
+Clusters that disappear from Capella are kept as a visibly deleted tombstone
+for the retention period (30 days by default) rather than vanishing
+<!-- default: retentionDays = 30 -->, so a
+short-lived cluster still leaves a trace. A second tab holds the lifecycle
+history: what changed, when, who or what decided it, and what came of it.
 
-- **Next.js 16** (App Router, TypeScript) + **Tailwind CSS 4**
-- **TanStack Table v8** (headless — no bundled styling) for the dashboard's sort/search, layered onto the existing Tailwind table markup
-- A hand-rolled local JSON file store (`src/lib/store.ts`) — no database
-  server, no ORM. At the scale this runs at (~100 clusters), a flat JSON
-  file with atomic write-then-rename is simpler and lighter than adding a
-  dependency for the same thing.
-- A background sync loop started via Next's `instrumentation.ts` hook, so
-  the poller and the web server run in the same always-on Node process.
-  This only works as a single long-lived process — it is **not** compatible
-  with serverless/edge deployment.
-- Login/session auth via a signed cookie (`src/lib/auth.ts`), not HTTP
-  Basic Auth.
+## Requirements
 
-## Install via npx
+- **Node.js 22.13.0 or newer.** The storage layer uses `node:sqlite`, which
+  needs that version to work without an experimental flag.
+- **A Capella API key** per organization you want to watch - see
+  [below](#the-capella-api-key).
+- Nothing else. No database server, no git clone, no build step, no
+  environment variables.
 
-Requires Node.js >=22.13.0 (needed by `node:sqlite`, this app's storage layer)
-and nothing else - no git clone, no `npm install`, no build step. Each
-GitHub Release has a prebuilt tarball attached; run it directly:
+## Install
+
+Each GitHub Release has a prebuilt tarball attached. Run it directly:
+
+Pick the release you want from
+[the releases page](https://github.com/alexander-krasilnikov/capella-housekeeper/releases), then substitute its tag and
+version below - `TAG` is the tag name (for example `v0.2.0`) and `VERSION` is
+the same number without the leading `v`:
 
 ```bash
-npx https://github.com/<org>/<repo>/releases/download/<tag>/capella-housekeeper-<version>.tgz
+npx https://github.com/alexander-krasilnikov/capella-housekeeper/releases/download/TAG/capella-housekeeper-VERSION.tgz
 ```
 
-(This isn't published to the public npm registry - it's only available as a
-GitHub Release asset, so the full URL above is required rather than a bare
-package name.)
+The releases page is the authority on what exists; this documentation
+deliberately does not name a version, so it cannot go stale or point at a
+release that was never published. Nothing is published to the public npm
+registry, so the full URL is required rather than a bare package name.
 
-On startup it prints the dashboard URL, the default-login reminder, and
-where it's storing data:
+On startup it prints where it is and where its data lives:
 
 ```
 Capella Housekeeper starting...
   Dashboard: http://localhost:3000
-  Login:     admin / change-me - change this in Settings
+  Login:     admin / change-me
   Data:      /home/you/.capella-housekeeper/data
 ```
 
-By default, data lives in a stable per-user directory
-(`~/.capella-housekeeper/data`) so it doesn't matter which directory you
-happen to run the command from - re-running it later, from anywhere, sees
-the same clusters and history. Set `CAPELLA_DATA_DIR` to use a different
-location instead. `PORT` and `HOSTNAME` are also respected, same as Next's
-own standalone server.
+Data lives in a stable per-user directory, so it does not matter which
+directory you launch from - running it again later, from anywhere, sees the
+same clusters and history. `CAPELLA_DATA_DIR`, `PORT`, and `HOSTNAME` all
+work as you would expect.
 
-### Running it as a persistent background service
+`npx` runs in the foreground, so closing the terminal stops it. For anything
+beyond a first look, run it under systemd or launchd - see
+[operations](docs/operations.md#running-it-as-a-persistent-service).
 
-`npx` runs the process in the foreground - closing the terminal stops it.
-Since this app's entire purpose is an always-on background sync + Slack
-bot, you'll usually want it kept running. Two examples:
+## First run
 
-**systemd** (Linux) - `/etc/systemd/system/capella-housekeeper.service`:
+1. **Open the dashboard** and log in as `admin` / `change-me`.
+2. **Set a real password.** You will be redirected straight to a
+   password-change page and cannot reach anything else until you have
+   replaced the default. This is enforced, not advisory.
+3. **Add an organization** under **Settings** → **Capella organizations**:
+   its organization ID and an API key. The organization's name and the number
+   of projects the key can see are resolved live from Capella, so a wrong ID
+   or an insufficient key is visible immediately, before you save.
+4. **Wait for the first sync.** It runs at once on startup and then on the
+   configured interval (hourly by default) <!-- default: syncIntervalHours = 1 -->. Until a cycle completes with at
+   least one organization configured, the dashboard is empty.
 
-```ini
-[Unit]
-Description=Capella Housekeeper
-After=network.target
+That is the whole setup. Settings are stored in the database, take effect on
+next use without a restart, and there is no configuration file to edit.
 
-[Service]
-ExecStart=/usr/bin/npx https://github.com/<org>/<repo>/releases/download/<tag>/capella-housekeeper-<version>.tgz
-Restart=on-failure
-User=<your-user>
+## The Capella API key
 
-[Install]
-WantedBy=multi-user.target
-```
+**A read-only key is not enough** if you intend to use any of the action
+features. Listing clusters works perfectly with read access, and then every
+turn-off and delete fails.
 
-Then: `sudo systemctl enable --now capella-housekeeper`.
+The key needs to permit the operations the application actually performs:
 
-**launchd** (macOS) - `~/Library/LaunchAgents/com.capella-housekeeper.plist`:
+| Operation | Needed for |
+|---|---|
+| Read organization, projects, clusters | The dashboard itself |
+| Read the organization's event log | Deriving last activity and owner |
+| Read per-cluster billing usage | The cost column |
+| Change a cluster's activation state | Turning clusters off (and on) |
+| Delete a cluster | Deleting clusters |
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.capella-housekeeper</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/bin/npx</string>
-    <string>https://github.com/&lt;org&gt;/&lt;repo&gt;/releases/download/&lt;tag&gt;/capella-housekeeper-&lt;version&gt;.tgz</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-</dict>
-</plist>
-```
+If you want visibility only, a read-only key is the right choice - it makes
+the read-only posture below true at the credential level as well as in
+configuration, which is a stronger guarantee than a setting.
 
-Then: `launchctl load ~/Library/LaunchAgents/com.capella-housekeeper.plist`.
+Keys may be scoped to a whole organization or to a single project. Several
+entries may share one organization ID with different project-scoped keys; each
+cluster is then acted on through the exact key that discovered it.
 
-## Development setup
+## Running it read-only
 
-For working on the code itself, rather than just running it (requires Node.js >=22.13.0):
+The defaults take no action against any cluster, and this is a supported way
+to run the application indefinitely - not an earlier phase of the project.
 
-No environment variables required. Install dependencies and run:
+Specifically, with a fresh installation:
 
-```bash
-npm install
-npm run dev     # http://localhost:3000, background sync starts automatically
-```
+- No Slack credentials are set, so nobody is ever contacted.
+- Every notification setting for both notifiable tiers is off, so no consent
+  is ever requested.
+- Nothing is turned off or deleted without a person pressing a button.
 
-For production: `npm run build && npm run start`.
+To keep it that way, leave **Settings** → **Slack notifications** alone. To
+guarantee it regardless of settings, give it a read-only API key: the manual
+action buttons will then fail against Capella rather than depending on nobody
+clicking them.
 
-On first run the dashboard seeds default settings (`admin` / `change-me`,
-1-hour sync, 7-day retention, zero organizations configured) into
-`data/settings.json` and shows an empty dashboard. Log in, then go to
-**Settings** to:
+When you are ready for more, the
+[consent workflow](docs/consent-workflow.md) covers what each setting does,
+and in particular which ones can stop a cluster without anyone approving it.
 
-- Change the default username/password (requires the current password).
-- Add at least one Capella organization (`orgId` + a Bearer `apiKey` with
-  read access) so sync has something to poll.
-- Adjust the sync interval, retention period, age-status thresholds, or the
-  Capella API base URL, if needed.
+## Documentation
 
-Every setting takes effect on its next use (next sync cycle, next
-age-status computation) without a restart. The one exception is the
-session-signing secret: it's generated automatically on first run and is
-never shown - Settings only offers a "Rotate" action, which logs out every
-active session.
+| | |
+|---|---|
+| [Slack setup](docs/slack-setup.md) | Creating the Slack app, both tokens, the four scopes, and why nothing needs to be exposed to the internet |
+| [The consent workflow](docs/consent-workflow.md) | Recency tiers, what owners are asked, snoozes and expiry, what acts without an answer, and manual actions |
+| [Operations](docs/operations.md) | Running as a service, the data directory, upgrading and backups, retention, troubleshooting |
+| [Development](docs/development.md) | Local setup, tests and CI, schema changes, cutting a release, code layout |
 
-The first sync cycle runs immediately on startup, then on the configured
-sync interval. Until at least one organization is configured and a cycle
-completes, the dashboard shows an empty state.
+## How it runs
 
-## Known open risk
+Two facts about the architecture matter to whoever operates it:
 
-Whether Capella's Activity Log is reachable through the public Management
-API (used here to derive "last activity" and corroborate cluster owner) was
-unconfirmed at the time this was built — see `design.md` in the linked
-change for details. The sync process already handles both outcomes: it
-tries the Activity Log first and falls back to its own change-detection
-if that call fails, so this is safe to leave as-is, but the exact endpoint
-path is worth validating against a real org API key.
+- **It is one long-lived process.** The sync loop, the reconciliation loop,
+  and the Slack connection all live inside the web server. It cannot be
+  deployed to serverless or edge platforms, and two copies must not share a
+  data directory.
+- **All state is one local SQLite file.** Backing it up is copying a file;
+  the application never does that for you. See
+  [upgrading](docs/operations.md#upgrading).
 
-## Project layout
+## Background
 
-```
-app/                    Next.js routes: login, dashboard, settings, server actions
-src/types.ts            Shared types (ClusterRecord, Settings, etc.)
-src/lib/settings.ts      All runtime configuration: read/write/validate data/settings.json
-src/lib/capellaClient.ts  Capella Management API client
-src/lib/rateLimiter.ts    Per-API-key rate limiting (100 req/min)
-src/lib/sync.ts           One sync cycle: fetch, derive, tombstone
-src/lib/scheduler.ts      Self-rescheduling sync loop, started from instrumentation.ts
-src/lib/store.ts          Local JSON store: atomic writes, history, retention
-src/lib/auth.ts           Session cookie signing/verification
-```
+This was built from an OpenSpec proposal, and the specs under
+`openspec/specs/` remain the contract for how it behaves. The original
+proposal and design decisions are archived at
+[openspec/changes/archive/2026-08-06-cluster-monitoring-dashboard](openspec/changes/archive/2026-08-06-cluster-monitoring-dashboard).
+Its framing is now historical: that change scoped the project to read-only
+visibility, and the governance features it deferred have since been built.
+
+## License
+
+Apache 2.0 - see [LICENSE](LICENSE).
