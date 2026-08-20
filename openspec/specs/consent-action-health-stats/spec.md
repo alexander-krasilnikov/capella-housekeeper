@@ -6,7 +6,7 @@ Gives operators a 7-day view of whether the consent-and-action workflow is movin
 ## Requirements
 ### Requirement: Total Clusters tile is removed
 
-The system SHALL NOT display a "Total Clusters" stat tile on the dashboard - that count is already shown by the sidebar nav badge, the cluster table's row-count footer, and the age-status filter's "All" count.
+The system SHALL NOT display a "Total Clusters" stat tile on the dashboard - that count is already shown by the sidebar nav badge, the cluster table's row-count footer, and the recency filter's "All" count.
 
 #### Scenario: Total Clusters tile absent
 - **WHEN** the dashboard is viewed

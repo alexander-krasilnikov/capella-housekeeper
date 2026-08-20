@@ -135,14 +135,14 @@ The system SHALL mask the configured Slack bot token and app-level token when th
 - **WHEN** the settings page renders and a Slack bot token and/or app-level token is configured
 - **THEN** its value is masked, with an explicit action required to reveal it
 
-### Requirement: Slack notification settings configurable in settings, excluding "In Use"
+### Requirement: Slack notification settings configurable in settings, excluding "Fresh"
 The system SHALL let an operator view and edit, per recency tier except "Fresh", whether transitions into that tier notify, offer a turn-off consent ask, and offer a delete consent ask. The system SHALL NOT provide any notification configuration for the "Fresh" tier. Saving these per-tier notification preferences SHALL NOT read, write, or otherwise affect the configured Slack bot token or app-level token.
 
 #### Scenario: Configuring a tier's notification behavior
 - **WHEN** an operator enables notification and both consent asks for the "Old" tier and saves
 - **THEN** subsequent transitions into "Old" send a notification offering both asks
 
-#### Scenario: No configuration exists for "In Use"
+#### Scenario: No configuration exists for "Fresh"
 - **WHEN** an operator views the per-tier notification settings
 - **THEN** only "Aging" and "Old" are configurable, and "Fresh" is not present
 

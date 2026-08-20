@@ -115,10 +115,10 @@ The system SHALL paginate the table with a user-selectable page size, showing co
 - **WHEN** a user selects a different rows-per-page value
 - **THEN** the table re-paginates using the new page size
 
-### Requirement: Age status shown independently of operational status
+### Requirement: Recency shown independently of operational status
 The system SHALL display each cluster's recency in a badge/column separate from its operational status badge/column, and SHALL NOT merge, replace, or override either status's display based on the value of the other.
 
-#### Scenario: Active and Forgotten shown together
+#### Scenario: Active and Old shown together
 - **WHEN** a cluster is operationally active and its recency is "Old"
 - **THEN** the row shows both an active operational-status badge and an "Old" recency badge, side by side
 
@@ -137,10 +137,10 @@ The system SHALL classify each cluster's raw Capella operational-status value in
 - **WHEN** a cluster's raw operational-status value does not match any known active, transitioning, or off state
 - **THEN** its status badge is shown in a distinct neutral/unrecognized color rather than defaulting to the active or off color
 
-### Requirement: Age-status filter
+### Requirement: Recency filter
 The system SHALL provide a row of quick-filter buttons - one for "All" plus one per recency tier - separate from the free-text search field, that restrict the table to rows matching the selected tier, and SHALL display, on each button, the count of clusters that would match if it were selected (computed against whatever the free-text search field already narrows the table down to).
 
-#### Scenario: Filtering to Forgotten clusters
+#### Scenario: Filtering to Old clusters
 - **WHEN** an operator selects the "Old" quick-filter button
 - **THEN** only clusters whose recency is "Old" are shown
 
@@ -148,7 +148,7 @@ The system SHALL provide a row of quick-filter buttons - one for "All" plus one 
 - **WHEN** an operator selects the "All" quick-filter button
 - **THEN** clusters of all recency tiers are shown again, subject to any other active filters
 
-#### Scenario: Counts reflect the active search, not the age-status filter itself
+#### Scenario: Counts reflect the active search, not the recency filter itself
 - **WHEN** a search term is entered that narrows the table to a subset of clusters
 - **THEN** each quick-filter button's count reflects only that narrowed subset, broken down by tier
 

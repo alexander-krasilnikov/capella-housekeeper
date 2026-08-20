@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import {
   createSessionToken,
+  isUsingDefaultPassword,
   verifyCredentials,
   verifyCurrentPassword,
   SESSION_COOKIE_NAME,
@@ -57,6 +58,16 @@ export async function loginAction(formData: FormData): Promise<void> {
   void runSyncCycle()
     .then(() => revalidatePath("/"))
     .catch((err) => console.error("[login] background sync failed:", err));
+
+  // Redirect straight to the gate here rather than leaving it to proxy.ts's
+  // middleware to catch on the next request - a middleware redirect fired
+  // during this action's own client-side transition swaps in the right page
+  // but leaves the browser's URL bar showing "/" until a hard reload. See
+  // dashboard-auth spec "Access is blocked behind a mandatory change while
+  // the password is still the default".
+  if (await isUsingDefaultPassword()) {
+    redirect("/change-password");
+  }
 
   redirect("/");
 }

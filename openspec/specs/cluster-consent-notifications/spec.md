@@ -1,7 +1,7 @@
 # cluster-consent-notifications Specification
 
 ## Purpose
-Detects age-status tier transitions worth acting on, asks the cluster's derived owner for consent to turn off or delete it via a Slack direct message, and tracks that consent - including a snooze option - through its pending, reminder, expiry, and decision lifecycle.
+Detects recency tier transitions worth acting on, asks the cluster's derived owner for consent to turn off or delete it via a Slack direct message, and tracks that consent - including a snooze option - through its pending, reminder, expiry, and decision lifecycle.
 ## Requirements
 ### Requirement: Notification fires on tier transition, not on every sync
 The system SHALL send a notification only when a cluster's computed recency changes to a tier configured to notify, compared to the tier last observed for that cluster - not on every sync cycle a cluster spends within that tier.
@@ -127,7 +127,7 @@ Every consent notification SHALL state what happens if the owner does not respon
 - **WHEN** a consent notification is sent for a cluster in a tier with auto-turn-off-on-inaction and ask-to-turn-off both enabled, for a cluster that is currently running
 - **THEN** the notification states the reminder count, the expiry period, that the cluster will be turned off automatically if there is no response, and the configured maximum number of snoozes
 
-#### Scenario: Forgotten-tier no-response notice
+#### Scenario: Old-tier no-response notice
 - **WHEN** a consent notification is sent for a cluster in the "Old" tier
 - **THEN** the notification additionally states that the cluster has already exceeded the configured Old grace period
 
@@ -142,7 +142,7 @@ The system SHALL leave a cluster's consent outcome (approved-turnoff, approved-d
 - **WHEN** a cluster with an approved or expired consent outcome transitions to a different recency tier
 - **THEN** its consent state resets and a new notification may be sent according to that tier's configuration
 
-### Requirement: Per-tier notification configuration, excluding "In Use"
+### Requirement: Per-tier notification configuration, excluding "Fresh"
 The system SHALL allow each recency tier except "Fresh" (that is: Aging and Old) to be independently configured with a notify toggle, an ask-to-turn-off toggle, an ask-to-delete toggle, an auto-turn-off-on-inaction toggle, and - only meaningful while that toggle is on - a maximum snooze count. The system SHALL NOT offer any notification configuration for "Fresh", and SHALL NOT automatically send a notification, nor apply auto-turn-off-on-inaction, for a cluster while it is classified "Fresh" regardless of any other setting. This automatic exclusion does not apply to a manually-triggered request - see "Manual consent requests are always available" below.
 
 #### Scenario: Tier configured to notify with both asks
@@ -153,7 +153,7 @@ The system SHALL allow each recency tier except "Fresh" (that is: Aging and Old)
 - **WHEN** an operator enables notify but leaves ask-to-turn-off and ask-to-delete disabled for a tier
 - **THEN** a cluster transitioning into that tier triggers a notification with no turn-off or delete option (a snooze option is still offered - see below)
 
-#### Scenario: In Use is never automatically notification-eligible
+#### Scenario: Fresh is never automatically notification-eligible
 - **WHEN** a cluster's recency is "Fresh"
 - **THEN** no automatic notification is sent for it, no per-tier configuration exists for "Fresh" in settings, and auto-turn-off-on-inaction never applies to it
 
@@ -220,11 +220,11 @@ When a cluster's tier has auto-turn-off-on-inaction enabled, the system SHALL st
 ### Requirement: Manual consent requests are always available
 The system SHALL let an operator manually send a consent request for any cluster regardless of its current recency tier, including "Fresh". A manual request for a cluster classified "Fresh" SHALL offer both turn-off and delete consent options, since no per-tier configuration exists for that tier to derive them from. Once sent, a manually-triggered request follows the same pending/reminder/expiry lifecycle as any other, regardless of tier.
 
-#### Scenario: Manually requesting consent for an In Use cluster
+#### Scenario: Manually requesting consent for a Fresh cluster
 - **WHEN** an operator manually triggers a consent request for a cluster currently classified "Fresh"
 - **THEN** the request is sent, offering both turn-off and delete options alongside snooze
 
-#### Scenario: A manually-sent In Use request still reaches expiry
+#### Scenario: A manually-sent Fresh request still reaches expiry
 - **WHEN** a manually-sent consent request for a cluster classified "Fresh" goes unanswered
 - **THEN** it receives reminders and eventually expires on the same schedule as any other pending request
 
